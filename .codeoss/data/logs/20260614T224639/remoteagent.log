@@ -1,0 +1,13 @@
+2026-06-14 22:46:39.811 [info] 
+
+
+
+
+2026-06-14 22:46:39.874 [info] Extension host agent started.
+2026-06-14 22:46:40.000 [info] Started initializing default profile extensions in extensions installation folder. file:///home/reternol4/.codeoss/extensions
+2026-06-14 22:46:40.050 [info] Completed initializing default profile extensions in extensions installation folder. file:///home/reternol4/.codeoss/extensions
+2026-06-14 22:46:43.427 [info] [127.0.0.1][b99792e9][ManagementConnection] New connection established.
+2026-06-14 22:46:43.431 [info] [127.0.0.1][f88c6a96][ExtensionHostConnection] New connection established.
+2026-06-14 22:46:46.408 [info] [127.0.0.1][f88c6a96][ExtensionHostConnection] <1493> Launched Extension Host Process.
+2026-06-14 22:46:47.267 [info] [127.0.0.1][f88c6a96][ExtensionHostConnection] <1493> [reconnection-grace-time] Extension host: read VSCODE_RECONNECTION_GRACE_TIME=10800000ms (10800s)
+

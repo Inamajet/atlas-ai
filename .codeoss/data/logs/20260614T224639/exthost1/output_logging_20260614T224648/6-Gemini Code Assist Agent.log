@@ -1,0 +1,201 @@
+Starting background process...
+Background process started with PID 1544
+[ERROR] 2026-06-14 22:47:01.359 PM -- Warning: unexpected file /home/reternol4/.gemini/extensions/extension-enablement.json in extensions directory.
+[INFO] 2026-06-14 22:47:01.362 PM -- Loading extension: vertex (version: 0.2.0)
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.geminiignore, continue without it.
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.aiexclude, continue without it.
+[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: /google/devshell/editor/code-oss-for-cloud-shell (importFormat: tree)
+[DEBUG] [MemoryDiscovery] Searching for GEMINI.md starting from CWD: /google/devshell/editor/code-oss-for-cloud-shell
+[DEBUG] [MemoryDiscovery] Determined project root: None
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/reternol4/.gemini/extensions/vertex/GEMINI.md (dev: 2065, ino: 131177)
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/reternol4/.gemini/extensions/vertex/GEMINI.md (Length: 55458)
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.geminiignore, continue without it.
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.aiexclude, continue without it.
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.geminiignore, continue without it.
+Ignore file not found: /google/devshell/editor/code-oss-for-cloud-shell/.aiexclude, continue without it.
+Ripgrep is not available. Falling back to GrepTool.
+Loading extension: vertex
+Scheduling MCP context refresh...
+Executing MCP context refresh...
+[DEBUG] [MemoryDiscovery] Loading server hierarchical memory for CWD: /google/devshell/editor/code-oss-for-cloud-shell (importFormat: tree)
+Workspace skills disabled because folder is not trusted.
+Hook registry initialized with 0 hook entries
+Hook system initialized successfully
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/reternol4/.gemini/extensions/vertex/GEMINI.md (dev: 2065, ino: 131177)
+[DEBUG] [MemoryDiscovery] deduplication: keeping /home/reternol4/.gemini/extensions/vertex/GEMINI.md (dev: 2065, ino: 131177)
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/reternol4/.gemini/extensions/vertex/GEMINI.md (Length: 55458)
+MCP context refresh complete.
+[DEBUG] [MemoryDiscovery] Successfully read and processed imports: /home/reternol4/.gemini/extensions/vertex/GEMINI.md (Length: 55458)
+[STARTUP] StartupProfiler.flush() called with 1 phases
+[STARTUP] Recording metric for phase: discover_tools duration: 8553.645064
+[INFO] 2026-06-14 22:47:10.366 PM -- [Config] Using CCPA Auth:
+[INFO] 2026-06-14 22:47:10.367 PM -- [Config] Attempting COMPUTE_ADC first.
+Failed to load credentials from /home/reternol4/.gemini/oauth_creds.json: ENOENT: no such file or directory, open '/home/reternol4/.gemini/oauth_creds.json'
+Attempting to authenticate via metadata server application default credentials.
+Authentication successful.
+Experiments loaded {
+  experimentIds: [
+    106018683,
+    105979538,
+    105979560,
+    106015337,
+    105979579,
+    105867471,
+    105979522,
+    105995634,
+    106100625,
+    104638466,
+    101868197,
+    104817729,
+    105695344,
+    106064591,
+    104913215,
+    105821930,
+    104922093,
+    103012598,
+    106143956,
+    105856899,
+    106064030,
+    105757908,
+    104892493,
+    105822886,
+    105785683,
+    105721273,
+    105897325,
+    105658071,
+    106240752,
+    105885552,
+    105864343,
+    106166745,
+    106106762,
+    106057393,
+    106106760,
+    106283618,
+    105620019,
+    106038160,
+    106281951,
+    106264532,
+    106222834,
+    106094629,
+    105887313,
+    105849474,
+    106032303,
+    106228452,
+    106113886,
+    103118072,
+    105979531,
+    105979553,
+    106015328,
+    105867469,
+    105979517,
+    106100654,
+    104638459,
+    101551624,
+    104673683,
+    105695346,
+    106064590,
+    104913210,
+    105821928,
+    104922082,
+    103012592,
+    106064028,
+    104892490,
+    105822881,
+    105721268,
+    105895316,
+    105658068,
+    106240748,
+    105885549,
+    105863625,
+    106102706,
+    106057389,
+    106283614,
+    105620012,
+    106038153,
+    105887311,
+    106032301,
+    106113877,
+    103118069,
+    106018680
+  ],
+  flags: [
+    {
+      flagId: '45740197',
+      floatValue: 0.7
+    },
+    {
+      flagId: '45740199',
+      stringValue: ''
+    },
+    {
+      flagId: '45740200',
+      stringValue: ''
+    },
+    {
+      flagId: '45743869',
+      boolValue: false
+    },
+    {
+      flagId: '45750526',
+      boolValue: true
+    },
+    {
+      flagId: '45750527',
+      intValue: '90'
+    },
+    {
+      flagId: '45752213',
+      boolValue: true
+    },
+    {
+      flagId: '45761848',
+      boolValue: true
+    },
+    {
+      flagId: '45768879',
+      boolValue: true
+    },
+    {
+      flagId: '45773036',
+      stringValue: ''
+    },
+    {
+      flagId: '45773134',
+      intValue: '300'
+    },
+    {
+      flagId: '45773135',
+      intValue: '600'
+    },
+    {
+      flagId: '45773187',
+      stringValue: ''
+    },
+    {
+      flagId: '45773188',
+      boolValue: false
+    },
+    {
+      flagId: '45773189',
+      intValue: '30'
+    },
+    {
+      flagId: '45773190',
+      intValue: '15'
+    },
+    {
+      flagId: '45774515',
+      intValue: '10'
+    },
+    {
+      flagId: '45784352',
+      boolValue: true
+    }
+  ]
+}
+[INFO] 2026-06-14 22:47:10.976 PM -- [Config] COMPUTE_ADC successful.
+[INFO] 2026-06-14 22:47:10.977 PM -- [Config] GOOGLE_CLOUD_PROJECT: cloudshell-gca
+[INFO] 2026-06-14 22:47:10.998 PM -- Using InMemoryTaskStore
+[INFO] 2026-06-14 22:47:11.010 PM -- [CoreAgent] Agent Server started on http://localhost:42265
+[INFO] 2026-06-14 22:47:11.010 PM -- [CoreAgent] Agent Card: http://localhost:42265/.well-known/agent-card.json
+[INFO] 2026-06-14 22:47:11.011 PM -- [CoreAgent] Press Ctrl+C to stop the server

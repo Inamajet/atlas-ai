@@ -1,0 +1,23 @@
+{
+  "facts": [
+    "User's name is Mani"
+  ],
+  "history": [
+    {
+      "role": "user",
+      "content": "my name is mani"
+    },
+    {
+      "role": "assistant",
+      "content": "Nice to meet you, Mani. What can I do for you today?"
+    },
+    {
+      "role": "user",
+      "content": "my name is mani"
+    },
+    {
+      "role": "assistant",
+      "content": "Nice to \"keep\" meeting you, Mani. As Atlas, I hold the weight of the world on my shoulders. What's on your mind?"
+    }
+  ]
+}
