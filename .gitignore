@@ -1,0 +1,6 @@
+.local/
+.cache/
+.npm/
+.rustup/
+__pycache__/
+*.pyc
