@@ -4,3 +4,4 @@
 .rustup/
 __pycache__/
 *.pyc
+.cache/
