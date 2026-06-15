@@ -426,15 +426,133 @@ def add_schedule():
         return jsonify({"status": "scheduled", "goal": goal, "cron": cron_expr})
     return jsonify({"error": "Invalid cron"})
 
+# ── Model info endpoint ────────────────────────────────────────────────────────
+@app.route("/models")
+def model_info():
+    return jsonify({
+        "primary": FAST_MODEL,
+        "synthesizer": SYNTH_MODEL,
+        "council": [{"model": m, "role": r} for m, r in COUNCIL_MODELS],
+        "router": ROUTER_MODEL,
+        "total": len(COUNCIL_MODELS) + 2
+    })
+
 # ── UI ─────────────────────────────────────────────────────────────────────────
 HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Atlas</title>
+<title>ATLAS</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600;700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box;}
+  :root{
+    --bg:#050508;--panel:#0a0a10;--border:#1a1a2e;--accent:#7b2fff;
+    --accent2:#a855f7;--text:#c8c8e8;--muted:#4a4a6a;--bright:#e0d0ff;
+    --green:#00ff88;--red:#ff3366;--gold:#ffb347;
+  }
+  body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+
+  /* ── TOP BAR ── */
+  #topbar{height:44px;background:rgba(10,10,16,0.95);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:20px;flex-shrink:0;backdrop-filter:blur(10px);}
+  #logo{font-family:'Share Tech Mono',monospace;font-size:14px;color:var(--accent2);letter-spacing:0.3em;}
+  #logo span{color:var(--muted);}
+  .topbar-sep{width:1px;height:20px;background:var(--border);}
+  #status-line{font-size:11px;color:var(--green);font-family:'Share Tech Mono',monospace;letter-spacing:0.1em;}
+  #clock{margin-left:auto;font-family:'Share Tech Mono',monospace;font-size:18px;color:var(--bright);letter-spacing:0.15em;}
+  #intent-pill{font-size:10px;padding:3px 10px;border-radius:2px;background:transparent;border:1px solid var(--accent);color:var(--accent2);font-family:'Share Tech Mono',monospace;letter-spacing:0.15em;display:none;}
+
+  /* ── MAIN LAYOUT ── */
+  #layout{flex:1;display:flex;overflow:hidden;}
+
+  /* ── LEFT PANEL ── */
+  #left{width:220px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;padding:16px 12px;gap:16px;overflow-y:auto;}
+  .panel-label{font-size:9px;letter-spacing:0.2em;color:var(--muted);font-family:'Share Tech Mono',monospace;border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:8px;}
+  .stat-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+  .stat-name{font-size:11px;color:var(--muted);}
+  .stat-val{font-size:13px;font-weight:700;color:var(--bright);font-family:'Share Tech Mono',monospace;}
+  .stat-val.green{color:var(--green);}
+  .stat-val.purple{color:var(--accent2);}
+  .model-badge{padding:4px 8px;background:rgba(123,47,255,0.1);border:1px solid rgba(123,47,255,0.3);border-radius:2px;font-size:10px;font-family:'Share Tech Mono',monospace;color:var(--accent2);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .model-badge.active{border-color:var(--green);color:var(--green);animation:flicker 2s infinite;}
+  @keyframes flicker{0%,100%{opacity:1;}50%{opacity:0.7;}}
+  #tasks-list{flex:1;}
+  .task-item{padding:8px;border:1px solid var(--border);border-radius:2px;margin-bottom:4px;cursor:pointer;transition:border-color 0.2s;}
+  .task-item:hover{border-color:var(--accent);}
+  .task-goal{font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .task-meta{display:flex;align-items:center;gap:6px;margin-top:3px;}
+  .tdot{width:5px;height:5px;border-radius:50%;}
+  .tdot.running{background:var(--gold);animation:pulse 1s infinite;}
+  .tdot.complete{background:var(--green);}
+  .tdot.error{background:var(--red);}
+  .tdot.queued{background:var(--muted);}
+  .tstatus{font-size:10px;color:var(--muted);font-family:'Share Tech Mono',monospace;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+
+  /* ── CENTER ── */
+  #center{flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden;}
+  #orb-wrap{flex:1;position:relative;display:flex;align-items:center;justify-content:center;}
+  #orb-canvas{position:absolute;inset:0;width:100%;height:100%;}
+  #orb-label{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:0.2em;text-align:center;}
+  #active-model-display{position:absolute;top:16px;left:50%;transform:translateX(-50%);font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--accent2);letter-spacing:0.1em;text-align:center;opacity:0;transition:opacity 0.3s;}
+  #active-model-display.show{opacity:1;}
+
+  /* ── CHAT OVERLAY ── */
+  #chat-panel{position:absolute;inset:0;display:flex;flex-direction:column;pointer-events:none;}
+  #messages{flex:1;overflow-y:auto;padding:20px 40px;display:flex;flex-direction:column;gap:12px;pointer-events:all;}
+  #messages::-webkit-scrollbar{width:3px;}
+  #messages::-webkit-scrollbar-thumb{background:var(--border);}
+  .msg{display:flex;gap:10px;max-width:700px;}
+  .msg.user{align-self:flex-end;flex-direction:row-reverse;}
+  .msg.assistant{align-self:flex-start;}
+  .av{width:24px;height:24px;border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;font-family:'Share Tech Mono',monospace;}
+  .av.user{background:rgba(123,47,255,0.2);border:1px solid var(--accent);color:var(--accent2);}
+  .av.assistant{background:rgba(0,255,136,0.1);border:1px solid var(--green);color:var(--green);}
+  .bubble{padding:10px 14px;font-size:13px;line-height:1.6;border-radius:2px;}
+  .msg.user .bubble{background:rgba(123,47,255,0.08);border:1px solid rgba(123,47,255,0.2);border-radius:2px 0 2px 2px;}
+  .msg.assistant .bubble{background:rgba(0,0,0,0.6);border:1px solid var(--border);border-radius:0 2px 2px 2px;backdrop-filter:blur(10px);}
+  .bubble p{margin-bottom:8px;}.bubble p:last-child{margin-bottom:0;}
+  .bubble h1,.bubble h2,.bubble h3{font-size:13px;font-weight:700;color:var(--bright);margin:10px 0 4px;}
+  .bubble ul,.bubble ol{padding-left:18px;margin-bottom:8px;}
+  .bubble li{margin-bottom:3px;}
+  .bubble code{background:rgba(123,47,255,0.15);padding:1px 4px;border-radius:2px;font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--accent2);}
+  .bubble pre{background:rgba(0,0,0,0.5);border:1px solid var(--border);padding:10px;border-radius:2px;overflow-x:auto;margin:8px 0;}
+  .bubble pre code{background:none;padding:0;}
+  .bubble strong{color:var(--bright);}
+  .bubble a{color:var(--accent2);}
+
+  /* ── INPUT ── */
+  #input-area{padding:12px 40px 16px;pointer-events:all;background:linear-gradient(transparent,rgba(5,5,8,0.95) 40%);}
+  #input-wrap{display:flex;align-items:flex-end;gap:8px;background:rgba(10,10,16,0.9);border:1px solid var(--border);border-radius:2px;padding:8px 8px 8px 14px;transition:border-color 0.2s;backdrop-filter:blur(20px);}
+  #input-wrap:focus-within{border-color:var(--accent);}
+  #input{flex:1;background:none;border:none;outline:none;color:var(--bright);font-size:13px;font-family:'Rajdhani',sans-serif;resize:none;max-height:120px;line-height:1.5;}
+  #input::placeholder{color:var(--muted);}
+  #send{width:32px;height:32px;background:var(--accent);border:none;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity 0.2s;}
+  #send:hover{opacity:0.8;}
+  #send svg{width:14px;height:14px;fill:white;}
+  #input-hint{font-size:10px;color:var(--muted);margin-top:6px;font-family:'Share Tech Mono',monospace;letter-spacing:0.1em;}
+
+  /* ── RIGHT PANEL ── */
+  #right{width:240px;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;padding:16px 12px;gap:12px;overflow-y:auto;}
+  #cmd-log{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);line-height:1.8;flex:1;overflow-y:auto;}
+  .log-line{color:var(--muted);}
+  .log-line.info{color:var(--accent2);}
+  .log-line.ok{color:var(--green);}
+  .log-line.warn{color:var(--gold);}
+  .log-line span{color:var(--muted);}
+
+  /* task side panel */
+  #task-panel{position:fixed;right:0;top:0;height:100vh;width:400px;background:var(--panel);border-left:1px solid var(--accent);transform:translateX(100%);transition:transform 0.2s;z-index:200;display:flex;flex-direction:column;}
+  #task-panel.open{transform:translateX(0);}
+  #tp-header{padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  #tp-title{font-size:12px;font-family:'Share Tech Mono',monospace;color:var(--accent2);}
+  #tp-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;}
+  #tp-content{flex:1;overflow-y:auto;padding:16px;font-size:12px;line-height:1.7;}
+  .step-log{color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:11px;margin-bottom:3px;}
+  #dl-btn{margin:12px 16px;padding:8px;background:var(--accent);border:none;color:white;border-radius:2px;cursor:pointer;font-size:12px;font-family:'Share Tech Mono',monospace;letter-spacing:0.1em;display:none;}
+</style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
     --bg: #0d0d0d;
@@ -537,198 +655,358 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 
-<div id="sidebar">
-  <div id="sidebar-header">
-    <h2>Atlas Tasks</h2>
-    <button id="new-chat" onclick="clearChat()">+ New conversation</button>
-  </div>
-  <div id="tasks-list"></div>
-  <div id="sidebar-footer">Atlas v2 · Always on</div>
+<!-- TOP BAR -->
+<div id="topbar">
+  <div id="logo">A<span>.</span>T<span>.</span>L<span>.</span>A<span>.</span>S</div>
+  <div class="topbar-sep"></div>
+  <div id="status-line">● ONLINE · ALWAYS ON</div>
+  <span id="intent-pill">FAST</span>
+  <div id="clock">00:00:00</div>
 </div>
 
-<div id="main">
-  <div id="header">
-    <div id="header-dot"></div>
-    <h1>Atlas</h1>
-    <span id="intent-badge">fast</span>
-    <span id="header-sub">Your AI executive layer</span>
-  </div>
+<div id="layout">
 
-  <div id="messages">
-    <div class="msg assistant">
-      <div class="avatar assistant">A</div>
-      <div class="bubble">Online. What do you need?</div>
-    </div>
+<!-- LEFT PANEL -->
+<div id="left">
+  <div>
+    <div class="panel-label">SYSTEM STATUS</div>
+    <div class="stat-row"><span class="stat-name">PRIMARY</span><span class="stat-val purple" id="primary-model-short">—</span></div>
+    <div class="stat-row"><span class="stat-name">COUNCIL</span><span class="stat-val green" id="council-count">—</span></div>
+    <div class="stat-row"><span class="stat-name">TOTAL MODELS</span><span class="stat-val" id="total-models">—</span></div>
+    <div class="stat-row"><span class="stat-name">STATUS</span><span class="stat-val green">ACTIVE</span></div>
   </div>
-
-  <div id="typing">
-    <div class="avatar">A</div>
-    <div class="dots">
-      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-    </div>
+  <div>
+    <div class="panel-label">ACTIVE MODELS</div>
+    <div id="model-list"></div>
   </div>
+  <div style="flex:1">
+    <div class="panel-label">BACKGROUND TASKS</div>
+    <div id="tasks-list"></div>
+  </div>
+  <button onclick="clearChat()" style="padding:8px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:0.1em;border-radius:2px;">NEW SESSION</button>
+</div>
 
-  <div id="input-area">
-    <div id="input-wrap">
-      <textarea id="input" placeholder="Ask anything or give Atlas a task..." rows="1"></textarea>
-      <button id="send" onclick="sendMessage()">
-        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-      </button>
+<!-- CENTER -->
+<div id="center">
+  <div id="orb-wrap">
+    <canvas id="orb-canvas"></canvas>
+    <div id="active-model-display"></div>
+    <div id="orb-label">NEURAL MESH · READY</div>
+  </div>
+  <div id="chat-panel">
+    <div id="messages">
+      <div class="msg assistant">
+        <div class="av assistant">A</div>
+        <div class="bubble">Online. What do you need?</div>
+      </div>
     </div>
-    <div id="input-hint">Enter to send · Shift+Enter for new line</div>
+    <div id="input-area">
+      <div id="input-wrap">
+        <textarea id="input" placeholder="Command Atlas..." rows="1"></textarea>
+        <button id="send" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
+      <div id="input-hint">ENTER TO SEND · SHIFT+ENTER FOR NEW LINE</div>
+    </div>
   </div>
 </div>
 
+<!-- RIGHT PANEL -->
+<div id="right">
+  <div class="panel-label">COMMAND LOG</div>
+  <div id="cmd-log"></div>
+</div>
+
+</div><!-- end layout -->
+
+<!-- TASK SIDE PANEL -->
 <div id="task-panel">
-  <div id="task-panel-header">
-    <h3 id="panel-title">Task Details</h3>
-    <button id="close-panel" onclick="closePanel()">×</button>
+  <div id="tp-header">
+    <span id="tp-title">TASK OUTPUT</span>
+    <button id="tp-close" onclick="closePanel()">×</button>
   </div>
-  <div id="task-panel-content"></div>
-  <button id="download-btn" onclick="downloadReport()">Download Report</button>
+  <div id="tp-content"></div>
+  <button id="dl-btn" onclick="downloadReport()">DOWNLOAD REPORT</button>
 </div>
 
 <script>
-let currentPanelTask = null;
-let pollInterval = null;
-
-const input = document.getElementById('input');
-const messages = document.getElementById('messages');
-const typing = document.getElementById('typing');
-const badge = document.getElementById('intent-badge');
-
-input.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
-input.addEventListener('input', () => {
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 150) + 'px';
-});
-
-function addMessage(role, content) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  const av = document.createElement('div');
-  av.className = `avatar ${role}`;
-  av.textContent = role === 'user' ? 'M' : 'A';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  if (role === 'assistant') {
-    bubble.innerHTML = marked.parse(content);
-  } else {
-    bubble.textContent = content;
-  }
-  div.appendChild(av);
-  div.appendChild(bubble);
-  messages.appendChild(div);
-  messages.scrollTop = messages.scrollHeight;
-  return div;
+// ── Clock ──
+function tick(){
+  const n=new Date();
+  document.getElementById('clock').textContent=
+    String(n.getHours()).padStart(2,'0')+':'+
+    String(n.getMinutes()).padStart(2,'0')+':'+
+    String(n.getSeconds()).padStart(2,'0');
 }
+tick(); setInterval(tick,1000);
 
-async function sendMessage() {
-  const msg = input.value.trim();
-  if (!msg) return;
-  input.value = '';
-  input.style.height = 'auto';
-  addMessage('user', msg);
-  typing.style.display = 'flex';
-  messages.scrollTop = messages.scrollHeight;
+// ── Orb / Particle Network ──
+const canvas=document.getElementById('orb-canvas');
+const ctx=canvas.getContext('2d');
+let W,H,nodes=[],animating=false,intensity=0;
 
-  try {
-    const res = await fetch('/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg})
+function resize(){
+  W=canvas.width=canvas.offsetWidth;
+  H=canvas.height=canvas.offsetHeight;
+}
+resize(); window.addEventListener('resize',()=>{resize();initNodes();});
+
+function initNodes(){
+  nodes=[];
+  const count=120;
+  const cx=W/2,cy=H/2,r=Math.min(W,H)*0.28;
+  for(let i=0;i<count;i++){
+    const theta=Math.random()*Math.PI*2;
+    const phi=Math.acos(2*Math.random()-1);
+    const rad=r*(0.4+Math.random()*0.6);
+    nodes.push({
+      x:cx+rad*Math.sin(phi)*Math.cos(theta),
+      y:cy+rad*Math.sin(phi)*Math.sin(theta),
+      ox:cx+rad*Math.sin(phi)*Math.cos(theta),
+      oy:cy+rad*Math.sin(phi)*Math.sin(theta),
+      vx:(Math.random()-0.5)*0.3,
+      vy:(Math.random()-0.5)*0.3,
+      r:Math.random()*1.8+0.5,
+      pulse:Math.random()*Math.PI*2,
     });
-    const data = await res.json();
-    typing.style.display = 'none';
-    addMessage('assistant', data.reply);
-    if (data.intent) {
-      badge.textContent = data.intent;
-      badge.style.display = 'inline';
+  }
+}
+initNodes();
+
+function drawOrb(){
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2,cy=H/2;
+  const t=Date.now()/1000;
+  const spd=animating?1+intensity*3:0.3;
+
+  // glow center
+  const grd=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(W,H)*0.3);
+  const alpha=animating?0.15+intensity*0.2:0.06;
+  grd.addColorStop(0,`rgba(123,47,255,${alpha})`);
+  grd.addColorStop(0.5,`rgba(123,47,255,${alpha*0.3})`);
+  grd.addColorStop(1,'rgba(123,47,255,0)');
+  ctx.fillStyle=grd;
+  ctx.beginPath();ctx.arc(cx,cy,Math.min(W,H)*0.35,0,Math.PI*2);ctx.fill();
+
+  // update + draw nodes
+  nodes.forEach(n=>{
+    n.pulse+=0.02*spd;
+    n.x+=n.vx*spd;n.y+=n.vy*spd;
+    const dx=n.x-cx,dy=n.y-cy,dist=Math.sqrt(dx*dx+dy*dy);
+    const maxR=Math.min(W,H)*0.32;
+    if(dist>maxR){n.vx*=-1;n.vy*=-1;}
+  });
+
+  // edges
+  for(let i=0;i<nodes.length;i++){
+    for(let j=i+1;j<nodes.length;j++){
+      const dx=nodes[i].x-nodes[j].x,dy=nodes[i].y-nodes[j].y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<80){
+        const a=(1-d/80)*(animating?0.4+intensity*0.4:0.12);
+        ctx.strokeStyle=`rgba(${animating?'168,85,247':'100,60,180'},${a})`;
+        ctx.lineWidth=animating?0.8:0.4;
+        ctx.beginPath();ctx.moveTo(nodes[i].x,nodes[i].y);ctx.lineTo(nodes[j].x,nodes[j].y);ctx.stroke();
+      }
     }
-    if (data.intent === 'task') loadTasks();
-  } catch(e) {
-    typing.style.display = 'none';
-    addMessage('assistant', 'Connection error. Try again.');
+  }
+
+  // nodes
+  nodes.forEach(n=>{
+    const pulse=Math.sin(n.pulse)*0.5+0.5;
+    const a=animating?0.5+pulse*0.5:0.2+pulse*0.15;
+    const nr=n.r*(animating?1+pulse*intensity*2:1);
+    ctx.fillStyle=`rgba(168,85,247,${a})`;
+    ctx.beginPath();ctx.arc(n.x,n.y,nr,0,Math.PI*2);ctx.fill();
+  });
+
+  requestAnimationFrame(drawOrb);
+}
+drawOrb();
+
+function setOrbActive(on, lvl=1){
+  animating=on; intensity=lvl;
+  document.getElementById('orb-label').textContent=on?'NEURAL MESH · PROCESSING':'NEURAL MESH · READY';
+}
+
+// ── Log ──
+function log(msg,type=''){
+  const el=document.getElementById('cmd-log');
+  const t=new Date();
+  const ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')+':'+String(t.getSeconds()).padStart(2,'0');
+  const line=document.createElement('div');
+  line.className='log-line '+(type||'');
+  line.innerHTML=`<span>[${ts}]</span> ${msg}`;
+  el.appendChild(line);
+  el.scrollTop=el.scrollHeight;
+  if(el.children.length>50) el.removeChild(el.firstChild);
+}
+
+// ── Models ──
+async function loadModels(){
+  try{
+    const r=await fetch('/models');
+    const d=await r.json();
+    const shortName=m=>m.split('/').pop().replace(':free','').toUpperCase().slice(0,12);
+    document.getElementById('primary-model-short').textContent=shortName(d.primary);
+    document.getElementById('council-count').textContent=d.council.length+' MODELS';
+    document.getElementById('total-models').textContent=d.total;
+    const ml=document.getElementById('model-list');
+    ml.innerHTML='';
+    const primary=document.createElement('div');
+    primary.className='model-badge active';
+    primary.textContent='▶ '+shortName(d.primary);
+    ml.appendChild(primary);
+    d.council.forEach(c=>{
+      const b=document.createElement('div');
+      b.className='model-badge';
+      b.textContent=c.role.toUpperCase()+' · '+shortName(c.model);
+      ml.appendChild(b);
+    });
+  }catch(e){}
+}
+loadModels();
+
+// ── Chat ──
+const input=document.getElementById('input');
+const messages=document.getElementById('messages');
+const pill=document.getElementById('intent-pill');
+const amd=document.getElementById('active-model-display');
+
+input.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
+});
+input.addEventListener('input',()=>{
+  input.style.height='auto';
+  input.style.height=Math.min(input.scrollHeight,120)+'px';
+});
+
+function addMessage(role,content){
+  const div=document.createElement('div');
+  div.className='msg '+role;
+  const av=document.createElement('div');
+  av.className='av '+role;
+  av.textContent=role==='user'?'M':'A';
+  const bubble=document.createElement('div');
+  bubble.className='bubble';
+  bubble.innerHTML=role==='assistant'?marked.parse(content):escapeHtml(content);
+  div.appendChild(av);div.appendChild(bubble);
+  messages.appendChild(div);
+  messages.scrollTop=messages.scrollHeight;
+}
+
+function escapeHtml(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+const INTENT_LABELS={chitchat:'CASUAL',fast:'FAST · NEMOTRON 550B',search:'SEARCH · WEB',council:'COUNCIL · 6 MODELS',task:'CREW · AUTONOMOUS'};
+const INTENT_LEVELS={chitchat:0.3,fast:0.5,search:0.6,council:1,task:0.8};
+
+async function sendMessage(){
+  const msg=input.value.trim();
+  if(!msg)return;
+  input.value='';input.style.height='auto';
+  addMessage('user',msg);
+  log('Query received','info');
+  setOrbActive(true,0.5);
+  messages.scrollTop=messages.scrollHeight;
+
+  try{
+    const res=await fetch('/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg})
+    });
+    const data=await res.json();
+    setOrbActive(false);
+    addMessage('assistant',data.reply);
+    if(data.intent){
+      pill.textContent=INTENT_LABELS[data.intent]||data.intent.toUpperCase();
+      pill.style.display='inline';
+      log('Route: '+data.intent.toUpperCase(),'ok');
+      amd.textContent=INTENT_LABELS[data.intent]||'';
+      amd.classList.add('show');
+      setTimeout(()=>amd.classList.remove('show'),3000);
+    }
+    if(data.intent==='task'){loadTasks();log('Crew task spawned','warn');}
+    if(data.intent==='council'){log('Council of 6 consulted','ok');}
+  }catch(e){
+    setOrbActive(false);
+    addMessage('assistant','Connection error. Try again.');
+    log('Error: '+e.message,'');
   }
 }
 
-function clearChat() {
-  messages.innerHTML = `<div class="msg assistant"><div class="avatar assistant">A</div><div class="bubble">Online. What do you need?</div></div>`;
+function clearChat(){
+  messages.innerHTML='<div class="msg assistant"><div class="av assistant">A</div><div class="bubble">Online. What do you need?</div></div>';
+  log('Session cleared','');
 }
 
-async function loadTasks() {
-  try {
-    const res = await fetch('/tasks');
-    const tasks = await res.json();
-    const list = document.getElementById('tasks-list');
-    list.innerHTML = '';
-    tasks.slice(0, 15).forEach(t => {
-      const item = document.createElement('div');
-      item.className = 'task-item';
-      item.onclick = () => openPanel(t.task_id || t.id, t.goal);
-      const status = t.status || 'queued';
-      item.innerHTML = `
-        <div class="task-goal">${(t.goal || 'Task').slice(0, 60)}</div>
-        <div class="task-meta">
-          <span class="status-dot dot-${status}"></span>
-          <span>${status}</span>
-        </div>`;
+// ── Tasks ──
+async function loadTasks(){
+  try{
+    const r=await fetch('/tasks');
+    const tasks=await r.json();
+    const list=document.getElementById('tasks-list');
+    list.innerHTML='';
+    tasks.slice(0,10).forEach(t=>{
+      const item=document.createElement('div');
+      item.className='task-item';
+      item.onclick=()=>openPanel(t.task_id||t.id,t.goal);
+      const st=t.status||'queued';
+      item.innerHTML=`<div class="task-goal">${(t.goal||'Task').slice(0,50)}</div>
+        <div class="task-meta"><span class="tdot ${st}"></span><span class="tstatus">${st.toUpperCase()}</span></div>`;
       list.appendChild(item);
     });
-  } catch(e) {}
+  }catch(e){}
 }
 
-async function openPanel(taskId, goal) {
-  currentPanelTask = taskId;
-  document.getElementById('panel-title').textContent = (goal || 'Task').slice(0, 50);
+let currentPanelTask=null,pollInterval=null;
+
+async function openPanel(taskId,goal){
+  currentPanelTask=taskId;
+  document.getElementById('tp-title').textContent=(goal||'TASK').slice(0,40).toUpperCase();
   document.getElementById('task-panel').classList.add('open');
   pollTask();
-  if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(pollTask, 3000);
+  if(pollInterval)clearInterval(pollInterval);
+  pollInterval=setInterval(pollTask,3000);
 }
 
-async function pollTask() {
-  if (!currentPanelTask) return;
-  try {
-    const res = await fetch(`/task/${currentPanelTask}`);
-    const t = await res.json();
-    const content = document.getElementById('task-panel-content');
-    const dl = document.getElementById('download-btn');
-    let html = '';
-    if (t.steps && t.steps.length) {
-      html += t.steps.map(s => `<div class="step-log">▸ ${s}</div>`).join('');
-    }
-    if (t.result) {
-      html += `<div style="margin-top:16px">${marked.parse(t.result)}</div>`;
-      dl.style.display = 'block';
-    }
-    if (!html) html = `<div style="color:var(--muted);font-size:13px">Waiting to start...</div>`;
-    content.innerHTML = html;
-    if (t.status === 'complete' || t.status === 'error') {
-      clearInterval(pollInterval);
-    }
-  } catch(e) {}
+async function pollTask(){
+  if(!currentPanelTask)return;
+  try{
+    const r=await fetch('/task/'+currentPanelTask);
+    const t=await r.json();
+    const content=document.getElementById('tp-content');
+    const dl=document.getElementById('dl-btn');
+    let html='';
+    if(t.steps&&t.steps.length) html+=t.steps.map(s=>`<div class="step-log">▸ ${s}</div>`).join('');
+    if(t.result){html+=`<div style="margin-top:12px">${marked.parse(t.result)}</div>`;dl.style.display='block';}
+    if(!html)html=`<div style="color:var(--muted);font-family:'Share Tech Mono',monospace;font-size:11px">INITIALIZING...</div>`;
+    content.innerHTML=html;
+    if(t.status==='complete'||t.status==='error')clearInterval(pollInterval);
+  }catch(e){}
 }
 
-function closePanel() {
+function closePanel(){
   document.getElementById('task-panel').classList.remove('open');
-  if (pollInterval) clearInterval(pollInterval);
-  currentPanelTask = null;
+  if(pollInterval)clearInterval(pollInterval);
+  currentPanelTask=null;
 }
 
-function downloadReport() {
-  const content = document.getElementById('task-panel-content').innerText;
-  const blob = new Blob([content], {type: 'text/plain'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `atlas-report-${Date.now()}.txt`;
+function downloadReport(){
+  const content=document.getElementById('tp-content').innerText;
+  const blob=new Blob([content],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='atlas-report-'+Date.now()+'.txt';
   a.click();
 }
 
 loadTasks();
-setInterval(loadTasks, 15000);
+setInterval(loadTasks,15000);
+log('Atlas online','ok');
+log('Primary: NEMOTRON-550B','info');
+log('Council: 6 models active','info');
 </script>
 </body>
 </html>"""
