@@ -1,6 +1,6 @@
 import os, json, requests, threading, uuid, time, re
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, Response
 from groq import Groq
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -443,7 +443,7 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ATLAS</title>
+<title>BORFOLI</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600;700&display=swap');
@@ -657,7 +657,7 @@ HTML = """<!DOCTYPE html>
 
 <!-- TOP BAR -->
 <div id="topbar">
-  <div id="logo">A<span>.</span>T<span>.</span>L<span>.</span>A<span>.</span>S</div>
+  <div id="logo">BORFOLI</div>
   <div class="topbar-sep"></div>
   <div id="status-line">● ONLINE · ALWAYS ON</div>
   <span id="intent-pill">FAST</span>
@@ -1004,7 +1004,7 @@ function downloadReport(){
 
 loadTasks();
 setInterval(loadTasks,15000);
-log('Atlas online','ok');
+log('Borfoli online','ok');
 log('Primary: NEMOTRON-550B','info');
 log('Council: 6 models active','info');
 </script>
@@ -1013,7 +1013,7 @@ log('Council: 6 models active','info');
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    return Response(HTML, mimetype='text/html')
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
