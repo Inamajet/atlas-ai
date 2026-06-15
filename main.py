@@ -21,16 +21,16 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 # ── Models ──────────────────────────────────────────────────────────────────
-ROUTER_MODEL   = "llama-3.1-8b-instant"   # Groq — fast classifier
-FAST_MODEL     = "nex-agi/Nex-N2-Pro:free" # OpenRouter — primary brain
-SYNTH_MODEL    = "nex-agi/Nex-N2-Pro:free" # OpenRouter — synthesizer
+ROUTER_MODEL   = "llama-3.1-8b-instant"                  # Groq — fast classifier
+FAST_MODEL     = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter — primary brain (550B)
+SYNTH_MODEL    = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter — synthesizer
 COUNCIL_MODELS = [
-    ("openai/gpt-oss-120b",                        "Powerhouse"),
-    ("openai/gpt-oss-20b",                         "Swift"),
-    ("llama-3.3-70b-versatile",                    "Strategist"),
-    ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
-    ("qwen/qwen3-32b",                             "Reasoner"),
-    ("groq/compound-mini",                         "Orchestrator"),
+    ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),   # 550B, OpenRouter
+    ("nex-agi/nex-n2-pro:free",                    "Nex"),        # 397B MoE, OpenRouter
+    ("google/gemma-4-31b-it:free",                 "Gemma"),      # 31B, OpenRouter
+    ("llama-3.3-70b-versatile",                    "Strategist"), # Groq
+    ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),      # Groq
+    ("qwen/qwen3-32b",                             "Reasoner"),   # Groq
 ]
 
 # ── Jarvis System Prompt ─────────────────────────────────────────────────────
@@ -173,10 +173,12 @@ def web_search(query):
     except: return ""
 
 # ── Answer Tiers ──────────────────────────────────────────────────────────────
+GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
+
 def groq_chat(model, messages, max_tokens=1024):
     try:
-        # Route OpenRouter models through or_client
-        c = or_client if ("/" in model and not model.startswith("openai/gpt-oss") and not model.startswith("meta-llama") and not model.startswith("qwen") and not model.startswith("groq")) or model.startswith("nex-agi") else client
+        use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
+        c = client if use_groq else or_client
         r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
         return r.choices[0].message.content.strip()
     except Exception as e:
