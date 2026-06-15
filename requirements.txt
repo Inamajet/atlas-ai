@@ -2,3 +2,4 @@ groq
 flask
 requests
 apscheduler
+openai
