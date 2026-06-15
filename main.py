@@ -20,17 +20,17 @@ COUNCIL = [
 ]
 SYNTHESIZER = "openai/gpt-oss-120b"
 
-def init_db():
-    requests.post(f"{SUPABASE_URL}/rest/v1/rpc/init_atlas", headers=HEADERS)
-
 def load_memory():
     r = requests.get(f"{SUPABASE_URL}/rest/v1/atlas_memory?order=id.desc&limit=1", headers=HEADERS)
     if r.status_code == 200 and r.json():
-        return r.json()[0]
+        row = r.json()[0]
+        facts = json.loads(row["facts"]) if isinstance(row["facts"], str) else row["facts"]
+        history = json.loads(row["history"]) if isinstance(row["history"], str) else row["history"]
+        return {"facts": facts or [], "history": history or []}
     return {"facts": [], "history": []}
 
 def save_memory(mem):
-    requests.delete(f"{SUPABASE_URL}/rest/v1/atlas_memory", headers={**HEADERS, "Prefer": "return=minimal"})
+    requests.delete(f"{SUPABASE_URL}/rest/v1/atlas_memory?id=gte.0", headers={**HEADERS, "Prefer": "return=minimal"})
     requests.post(f"{SUPABASE_URL}/rest/v1/atlas_memory", headers={**HEADERS, "Prefer": "return=minimal"},
                   json={"facts": json.dumps(mem["facts"]), "history": json.dumps(mem["history"])})
 
@@ -61,7 +61,8 @@ def build_context(mem):
     if mem["facts"]:
         ctx += "Facts about user: " + "; ".join(mem["facts"]) + "\n\n"
     for h in mem["history"][-20:]:
-        ctx += f"User: {h['user']}\nAtlas: {h['atlas']}\n"
+        if isinstance(h, dict):
+            ctx += f"User: {h['user']}\nAtlas: {h['atlas']}\n"
     return ctx
 
 def council_answer(msg, mem):
