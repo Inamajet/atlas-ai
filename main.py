@@ -21,10 +21,10 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "google/gemini-2.5-pro:free"
-SYNTH_MODEL    = "google/gemini-2.5-pro:free"
+FAST_MODEL     = "google/gemini-2.5-flash:free"
+SYNTH_MODEL    = "google/gemini-2.5-flash:free"
 COUNCIL_MODELS = [
-    ("google/gemini-2.5-pro:free",                 "Gemini"),
+    ("google/gemini-2.5-flash:free",               "Gemini"),
     ("deepseek/deepseek-r1:free",                  "DeepSeek"),
     ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),
     ("llama-3.3-70b-versatile",                    "Strategist"),
@@ -434,7 +434,7 @@ def vision():
     full_prompt = f"{JARVIS_PROMPT}\n\nUser memory:\n{facts}\n\nUser says: {prompt}"
     try:
         r = or_client.chat.completions.create(
-            model="google/gemini-2.5-pro:free",
+            model="google/gemini-2.5-flash:free",
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
                 {"type": "text", "text": full_prompt}
