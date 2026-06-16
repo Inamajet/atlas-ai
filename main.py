@@ -5,11 +5,18 @@ from groq import Groq
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
 
+import google.generativeai as genai
+
 app = Flask(__name__)
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 or_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
+)
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+gemini = genai.GenerativeModel(
+    model_name="gemini-2.5-pro",
+    system_instruction=None
 )
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -21,12 +28,12 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "nvidia/nemotron-3-ultra-550b-a55b:free"
-SYNTH_MODEL    = "nvidia/nemotron-3-ultra-550b-a55b:free"
+FAST_MODEL     = "gemini"
+SYNTH_MODEL    = "gemini"
 COUNCIL_MODELS = [
+    ("gemini",                                     "Gemini"),
+    ("deepseek/deepseek-r1:free",                  "DeepSeek"),
     ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),
-    ("nex-agi/nex-n2-pro:free",                    "Nex"),
-    ("google/gemma-4-31b-it:free",                 "Gemma"),
     ("llama-3.3-70b-versatile",                    "Strategist"),
     ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
     ("qwen/qwen3-32b",                             "Reasoner"),
@@ -123,19 +130,23 @@ def classify_intent(msg, history_snippet):
     prompt = f"""Classify this message into exactly one category. Reply with ONLY the single word.
 
 CATEGORIES:
-- chitchat: hi, hello, thanks, how are you, casual greetings only
-- fast: direct questions, explanations, advice, opinions, recommendations
-- search: needs current info, live prices, recent news, today's events
-- council: big strategic decisions, life/career planning, multi-angle analysis
-- task: user wants a DELIVERABLE — "write me a report", "research and summarize", "build", "create", "find and compile"
+- chitchat: hi, hello, thanks, how are you, casual greetings ONLY
+- fast: simple factual lookups, definitions, quick math — ONE sentence answer is enough
+- search: needs live/current info, prices, recent news, today's events
+- council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy — DEFAULT to this when unsure
+- task: user wants a DELIVERABLE produced autonomously — "write me a report", "research and summarize", "build", "create"
 
 EXAMPLES:
 "hi" → chitchat
 "what is VWAP" → fast
-"what should I focus on this summer" → council
-"research the best cybersecurity certs and write a report" → task
-"what's the current price of ETH" → search
+"what can you do" → council
+"are you smarter than X" → council
+"what should I focus on" → council
+"explain penetration testing" → council
+"research cybersecurity certs and write a report" → task
+"what's the current ETH price" → search
 "should I do X or Y" → council
+"how does X work" → council
 
 Message: {msg}
 
@@ -156,6 +167,19 @@ GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
 
 def groq_chat(model, messages, max_tokens=1024):
     try:
+        if model == "gemini":
+            # Convert messages to Gemini format
+            sys_msg = next((m["content"] for m in messages if m["role"] == "system"), JARVIS_PROMPT)
+            history = []
+            for m in messages:
+                if m["role"] == "system": continue
+                role = "user" if m["role"] == "user" else "model"
+                history.append({"role": role, "parts": [m["content"]]})
+            g = genai.GenerativeModel(model_name="gemini-2.5-pro", system_instruction=sys_msg)
+            chat = g.start_chat(history=history[:-1] if len(history) > 1 else [])
+            last = history[-1]["parts"][0] if history else ""
+            resp = chat.send_message(last)
+            return resp.text.strip()
         use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
         c = client if use_groq else or_client
         r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
