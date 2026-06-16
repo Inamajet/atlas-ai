@@ -1,0 +1,6 @@
+groq
+flask
+requests
+apscheduler
+openai
+google-generativeai
