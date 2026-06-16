@@ -5,18 +5,11 @@ from groq import Groq
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
 
-import google.generativeai as genai
-
 app = Flask(__name__)
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 or_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
-)
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel(
-    model_name="gemini-2.5-pro",
-    system_instruction=None
 )
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -28,10 +21,10 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "gemini"
-SYNTH_MODEL    = "gemini"
+FAST_MODEL     = "google/gemini-2.5-pro:free"
+SYNTH_MODEL    = "google/gemini-2.5-pro:free"
 COUNCIL_MODELS = [
-    ("gemini",                                     "Gemini"),
+    ("google/gemini-2.5-pro:free",                 "Gemini"),
     ("deepseek/deepseek-r1:free",                  "DeepSeek"),
     ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),
     ("llama-3.3-70b-versatile",                    "Strategist"),
@@ -167,19 +160,6 @@ GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
 
 def groq_chat(model, messages, max_tokens=1024):
     try:
-        if model == "gemini":
-            # Convert messages to Gemini format
-            sys_msg = next((m["content"] for m in messages if m["role"] == "system"), JARVIS_PROMPT)
-            history = []
-            for m in messages:
-                if m["role"] == "system": continue
-                role = "user" if m["role"] == "user" else "model"
-                history.append({"role": role, "parts": [m["content"]]})
-            g = genai.GenerativeModel(model_name="gemini-2.5-pro", system_instruction=sys_msg)
-            chat = g.start_chat(history=history[:-1] if len(history) > 1 else [])
-            last = history[-1]["parts"][0] if history else ""
-            resp = chat.send_message(last)
-            return resp.text.strip()
         use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
         c = client if use_groq else or_client
         r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
@@ -310,6 +290,24 @@ def morning_brief():
 scheduler.add_job(morning_brief, "cron", hour=8, minute=0, timezone="US/Central")
 scheduler.start()
 
+# ── Load persisted tasks on startup ──────────────────────────────────────────
+def restore_tasks():
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/atlas_tasks?order=created_at.desc&limit=50", headers=HEADERS)
+        for t in r.json():
+            tid = t.get("task_id")
+            if tid and tid not in task_store:
+                task_store[tid] = {
+                    "status": t.get("status", "complete"),
+                    "goal": t.get("goal", ""),
+                    "result": t.get("result", ""),
+                    "steps": [],
+                    "started": 0
+                }
+    except: pass
+
+threading.Thread(target=restore_tasks, daemon=True).start()
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -389,6 +387,63 @@ def model_info():
         "router": ROUTER_MODEL,
         "total": len(COUNCIL_MODELS) + 2
     })
+
+# ── Code Execution (Judge0) ───────────────────────────────────────────────────
+JUDGE0_URL = "https://judge0-ce.p.rapidapi.com"
+JUDGE0_KEY = os.environ.get("JUDGE0_KEY", "")
+
+LANG_IDS = {"python": 71, "javascript": 63, "js": 63, "bash": 46, "java": 62, "cpp": 54, "c": 50}
+
+def execute_code(code, language="python"):
+    if not JUDGE0_KEY:
+        # Fallback: safe local Python execution
+        try:
+            import subprocess
+            r = subprocess.run(["python3", "-c", code], capture_output=True, text=True, timeout=10)
+            return r.stdout or r.stderr or "(no output)"
+        except Exception as e:
+            return f"Error: {e}"
+    try:
+        lang_id = LANG_IDS.get(language.lower(), 71)
+        sub = requests.post(f"{JUDGE0_URL}/submissions?base64_encoded=false&wait=true",
+            headers={"X-RapidAPI-Key": JUDGE0_KEY, "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com"},
+            json={"source_code": code, "language_id": lang_id}, timeout=15)
+        result = sub.json()
+        return result.get("stdout") or result.get("stderr") or result.get("compile_output") or "(no output)"
+    except Exception as e:
+        return f"Execution error: {e}"
+
+@app.route("/execute", methods=["POST"])
+def run_code():
+    data = request.json
+    code = data.get("code", "")
+    lang = data.get("language", "python")
+    if not code: return jsonify({"error": "No code"})
+    output = execute_code(code, lang)
+    return jsonify({"output": output, "language": lang})
+
+# ── Image Understanding (OpenRouter Vision) ───────────────────────────────────
+import base64
+
+@app.route("/vision", methods=["POST"])
+def vision():
+    data = request.json
+    image_b64 = data.get("image")
+    prompt = data.get("prompt", "What do you see in this image?")
+    facts, _ = load_memory()
+    full_prompt = f"{JARVIS_PROMPT}\n\nUser memory:\n{facts}\n\nUser says: {prompt}"
+    try:
+        r = or_client.chat.completions.create(
+            model="google/gemini-2.5-pro:free",
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                {"type": "text", "text": full_prompt}
+            ]}],
+            max_tokens=1500
+        )
+        return jsonify({"reply": r.choices[0].message.content.strip()})
+    except Exception as e:
+        return jsonify({"reply": f"Vision error: {e}"})
 
 HTML = (
 "<!DOCTYPE html>\n"
@@ -485,9 +540,14 @@ HTML = (
 "#iw:focus-within{border-color:rgba(33,150,243,0.35);box-shadow:0 0 0 3px rgba(33,150,243,0.04);}\n"
 "#inp{flex:1;background:none;border:none;outline:none;color:var(--bright);font-size:13px;font-family:'Inter',sans-serif;font-weight:300;resize:none;max-height:120px;line-height:1.6;}\n"
 "#inp::placeholder{color:var(--muted);}\n"
+".tool-btn{width:30px;height:30px;background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s;color:var(--muted2);font-size:14px;}\n"
+".tool-btn:hover{border-color:var(--border2);color:var(--blue-bright);}\n"
+".tool-btn.active{border-color:var(--blue-dim);color:var(--blue-bright);background:var(--blue-glow);}\n"
 "#sb{width:32px;height:32px;background:var(--blue);border:none;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s;box-shadow:0 0 14px rgba(33,150,243,0.25);}\n"
 "#sb:hover{background:var(--blue-dim);box-shadow:0 0 20px rgba(33,150,243,0.4);}\n"
 "#sb svg{width:13px;height:13px;fill:white;}\n"
+"#img-preview{display:none;margin:6px 0;padding:6px 10px;background:var(--blue-glow);border:1px solid rgba(33,150,243,0.2);border-radius:4px;font-size:10px;color:var(--blue-bright);font-family:'JetBrains Mono',monospace;align-items:center;gap:8px;}\n"
+"#img-preview span{cursor:pointer;color:var(--muted2);}#img-preview span:hover{color:var(--text);}\n"
 "#hint{font-size:9px;color:var(--muted);margin-top:6px;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;}\n"
 "#tp{position:fixed;right:0;top:0;height:100vh;width:400px;background:var(--panel);border-left:1px solid var(--border);transform:translateX(100%);transition:transform 0.2s cubic-bezier(0.4,0,0.2,1);z-index:300;display:flex;flex-direction:column;}\n"
 "#tp.open{transform:translateX(0);}\n"
@@ -539,11 +599,15 @@ HTML = (
 '      <div class="msg assistant"><div class="av assistant">B</div><div class="bubble">Online. What do you need?</div></div>\n'
 '    </div>\n'
 '    <div id="input-area">\n'
+'      <div id="img-preview">📎 Image attached <span onclick="clearImg()">✕</span></div>\n'
 '      <div id="iw">\n'
 '        <textarea id="inp" placeholder="Ask Borfoli..." rows="1"></textarea>\n'
+'        <button class="tool-btn" id="mic-btn" onclick="toggleVoice()" title="Voice input">🎤</button>\n'
+'        <button class="tool-btn" onclick="document.getElementById(\'img-input\').click()" title="Attach image">📎</button>\n'
+'        <input type="file" id="img-input" accept="image/*" style="display:none" onchange="handleImg(event)">\n'
 '        <button id="sb" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>\n'
 '      </div>\n'
-'      <div id="hint">ENTER to send &nbsp;·&nbsp; SHIFT+ENTER new line</div>\n'
+'      <div id="hint">ENTER to send &nbsp;·&nbsp; SHIFT+ENTER new line &nbsp;·&nbsp; 🎤 voice &nbsp;·&nbsp; 📎 image</div>\n'
 '    </div>\n'
 '  </div>\n'
 '</div>\n'
@@ -570,7 +634,15 @@ HTML = (
 "inp.addEventListener('input',()=>{inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,120)+'px';});\n"
 "function addMsg(role,content){const d=document.createElement('div');d.className='msg '+role;const av=document.createElement('div');av.className='av '+role;av.textContent=role==='user'?'M':'B';const b=document.createElement('div');b.className='bubble';b.innerHTML=role==='assistant'?marked.parse(content):esc(content);d.appendChild(av);d.appendChild(b);msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;}\n"
 "function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}\n"
-"async function send(){const msg=inp.value.trim();if(!msg)return;inp.value='';inp.style.height='auto';addMsg('user',msg);setAct(true,'ROUTING...');msgs.scrollTop=msgs.scrollHeight;try{const res=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});const data=await res.json();setAct(false);addMsg('assistant',data.reply);if(data.intent){const tg=document.getElementById('intent-tag');tg.textContent=IL[data.intent]||data.intent.toUpperCase();tg.classList.add('on');setTimeout(()=>tg.classList.remove('on'),4000);}if(data.intent==='task')loadTasks();}catch(e){setAct(false);addMsg('assistant','Connection error.');}}\n"
+"// ── Image handling ──\n"
+"let pendingImg=null;\n"
+"function handleImg(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{pendingImg=ev.target.result.split(',')[1];document.getElementById('img-preview').style.display='flex';};r.readAsDataURL(f);}\n"
+"function clearImg(){pendingImg=null;document.getElementById('img-preview').style.display='none';document.getElementById('img-input').value='';}\n"
+"// ── Voice input ──\n"
+"let recog=null,listening=false;\n"
+"function toggleVoice(){if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){alert('Voice not supported in this browser.');return;}if(listening){recog&&recog.stop();return;}const SR=window.SpeechRecognition||window.webkitSpeechRecognition;recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang='en-US';recog.onstart=()=>{listening=true;document.getElementById('mic-btn').classList.add('active');};recog.onend=()=>{listening=false;document.getElementById('mic-btn').classList.remove('active');};recog.onresult=e=>{const t=e.results[0][0].transcript;inp.value=t;inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,120)+'px';};recog.start();}\n"
+"// ── Send ──\n"
+"async function send(){const msg=inp.value.trim();if(!msg&&!pendingImg)return;if(pendingImg){const imgData=pendingImg;const imgMsg=msg||'What do you see?';clearImg();inp.value='';addMsg('user',imgMsg+' [image]');setAct(true,'GEMINI VISION...');try{const res=await fetch('/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:imgData,prompt:imgMsg})});const data=await res.json();setAct(false);addMsg('assistant',data.reply);}catch(e){setAct(false);addMsg('assistant','Vision error.');}return;}inp.value='';inp.style.height='auto';addMsg('user',msg);setAct(true,'ROUTING...');msgs.scrollTop=msgs.scrollHeight;try{const res=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});const data=await res.json();setAct(false);addMsg('assistant',data.reply);if(data.intent){const tg=document.getElementById('intent-tag');tg.textContent=IL[data.intent]||data.intent.toUpperCase();tg.classList.add('on');setTimeout(()=>tg.classList.remove('on'),4000);}if(data.intent==='task')loadTasks();}catch(e){setAct(false);addMsg('assistant','Connection error.');}}\n"
 "function clearChat(){msgs.innerHTML='<div class=\"msg assistant\"><div class=\"av assistant\">B</div><div class=\"bubble\">Online. What do you need?</div></div>';}\n"
 "async function loadTasks(){try{const r=await fetch('/tasks'),tasks=await r.json();const tl=document.getElementById('tl');tl.innerHTML='';tasks.slice(0,8).forEach(t=>{const el=document.createElement('div');el.className='ti';el.onclick=()=>openTP(t.task_id||t.id,t.goal);const st=t.status||'queued';el.innerHTML='<div class=\"tg\">'+(t.goal||'Task').slice(0,80)+'</div><div class=\"ts\"><span class=\"td '+st+'\"></span><span class=\"ts-lbl\">'+st.toUpperCase()+'</span></div>';tl.appendChild(el);});}catch(e){}}\n"
 "let cur=null,pi=null;\n"
