@@ -21,15 +21,15 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "deepseek/deepseek-chat-v3-0324:free"
-SYNTH_MODEL    = "deepseek/deepseek-chat-v3-0324:free"
+FAST_MODEL     = "llama-3.3-70b-versatile"
+SYNTH_MODEL    = "llama-3.3-70b-versatile"
 COUNCIL_MODELS = [
-    ("deepseek/deepseek-chat-v3-0324:free",        "DeepSeek-V3"),
     ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
-    ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),
-    ("llama-3.3-70b-versatile",                    "Strategist"),
+    ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
+    ("qwen-qwq-32b",                               "QwQ"),
+    ("llama-3.3-70b-versatile",                    "Llama"),
     ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
-    ("qwen/qwen3-32b",                             "Reasoner"),
+    ("gemma2-9b-it",                               "Gemma"),
 ]
 
 JARVIS_PROMPT = """You are Borfoli — Mani's personal AI system. Not a chatbot. A fully autonomous executive layer.
