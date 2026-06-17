@@ -21,11 +21,11 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "meta-llama/llama-4-maverick:free"
-SYNTH_MODEL    = "meta-llama/llama-4-maverick:free"
+FAST_MODEL     = "deepseek/deepseek-chat-v3-0324:free"
+SYNTH_MODEL    = "deepseek/deepseek-chat-v3-0324:free"
 COUNCIL_MODELS = [
-    ("meta-llama/llama-4-maverick:free",               "Gemini"),
-    ("deepseek/deepseek-r1:free",                  "DeepSeek"),
+    ("deepseek/deepseek-chat-v3-0324:free",        "DeepSeek-V3"),
+    ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
     ("nvidia/nemotron-3-ultra-550b-a55b:free",     "Nemotron"),
     ("llama-3.3-70b-versatile",                    "Strategist"),
     ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
@@ -434,7 +434,7 @@ def vision():
     full_prompt = f"{JARVIS_PROMPT}\n\nUser memory:\n{facts}\n\nUser says: {prompt}"
     try:
         r = or_client.chat.completions.create(
-            model="meta-llama/llama-4-maverick:free",
+            model="meta-llama/llama-3.2-11b-vision-instruct:free",
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
                 {"type": "text", "text": full_prompt}
