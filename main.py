@@ -4,8 +4,20 @@ from flask import Flask, request, jsonify, Response
 from groq import Groq
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+@app.before_request
+def require_auth():
+    if not APP_PASSWORD:
+        return
+    auth = request.authorization
+    if not auth or auth.password != APP_PASSWORD:
+        return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Borfoli"'})
+
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 or_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -126,6 +138,7 @@ CATEGORIES:
 - chitchat: hi, hello, thanks, how are you, casual greetings ONLY
 - fast: simple factual lookups, definitions, quick math — ONE sentence answer is enough
 - search: needs live/current info, prices, recent news, today's events
+- browse: message contains a URL and wants it opened, read, or summarized
 - council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy — DEFAULT to this when unsure
 - task: user wants a DELIVERABLE produced autonomously — "write me a report", "research and summarize", "build", "create"
 
@@ -140,6 +153,8 @@ EXAMPLES:
 "what's the current ETH price" → search
 "should I do X or Y" → council
 "how does X work" → council
+"read this page and summarize it https://example.com/article" → browse
+"what does https://example.com say" → browse
 
 Message: {msg}
 
@@ -155,6 +170,29 @@ def web_search(query):
         results = r.json().get("results", [])
         return "\n\n".join(f"**{x['title']}**\n{x['content'][:400]}" for x in results[:4])
     except: return ""
+
+URL_RE = re.compile(r'https?://\S+')
+
+def browse_url(url):
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (compatible; BorfoliBot/1.0)"})
+        soup = BeautifulSoup(r.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        text = " ".join(soup.get_text(separator=" ").split())
+        return text[:6000]
+    except Exception as e:
+        return f"[Could not load {url}: {e}]"
+
+def browse_answer(msg, history, facts):
+    urls = URL_RE.findall(msg)
+    pages = "\n\n".join(f"Content from {u}:\n{browse_url(u)}" for u in urls[:2])
+    context = f"{pages}\n\nAnswer the user's request using this page content." if pages else msg
+    msgs = [{"role": "system", "content": JARVIS_PROMPT}]
+    if facts: msgs.append({"role": "system", "content": f"Memory:\n{facts}"})
+    for h in history[-6:]: msgs.append({"role": h["role"], "content": h["content"]})
+    msgs.append({"role": "user", "content": context})
+    return groq_chat(FAST_MODEL, msgs, max_tokens=1500)
 
 GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
 
@@ -321,6 +359,8 @@ def chat():
         reply = groq_chat(FAST_MODEL, [{"role": "system", "content": JARVIS_PROMPT}, {"role": "user", "content": msg}], max_tokens=300)
     elif intent == "search":
         reply = search_answer(msg, history, facts)
+    elif intent == "browse":
+        reply = browse_answer(msg, history, facts)
     elif intent == "council":
         reply = council_answer(msg, history, facts)
     elif intent == "task":
@@ -603,6 +643,7 @@ HTML = (
 '      <div id="iw">\n'
 '        <textarea id="inp" placeholder="Ask Borfoli..." rows="1"></textarea>\n'
 '        <button class="tool-btn" id="mic-btn" onclick="toggleVoice()" title="Voice input">🎤</button>\n'
+'        <button class="tool-btn" id="wake-btn" onclick="toggleWake()" title="Wake word: say &quot;Borfoli&quot;">👂</button>\n'
 '        <button class="tool-btn" onclick="document.getElementById(\'img-input\').click()" title="Attach image">📎</button>\n'
 '        <input type="file" id="img-input" accept="image/*" style="display:none" onchange="handleImg(event)">\n'
 '        <button id="sb" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>\n'
@@ -641,6 +682,9 @@ HTML = (
 "// ── Voice input ──\n"
 "let recog=null,listening=false;\n"
 "function toggleVoice(){if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){alert('Voice not supported in this browser.');return;}if(listening){recog&&recog.stop();return;}const SR=window.SpeechRecognition||window.webkitSpeechRecognition;recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang='en-US';recog.onstart=()=>{listening=true;document.getElementById('mic-btn').classList.add('active');};recog.onend=()=>{listening=false;document.getElementById('mic-btn').classList.remove('active');};recog.onresult=e=>{const t=e.results[0][0].transcript;inp.value=t;inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,120)+'px';};recog.start();}\n"
+"// ── Wake word ──\n"
+"let wakeRecog=null,wakeOn=false;\n"
+"function toggleWake(){if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){alert('Voice not supported in this browser.');return;}if(wakeOn){wakeOn=false;wakeRecog&&wakeRecog.stop();document.getElementById('wake-btn').classList.remove('active');return;}const SR=window.SpeechRecognition||window.webkitSpeechRecognition;wakeRecog=new SR();wakeRecog.continuous=true;wakeRecog.interimResults=false;wakeRecog.lang='en-US';wakeOn=true;document.getElementById('wake-btn').classList.add('active');wakeRecog.onresult=e=>{const raw=e.results[e.results.length-1][0].transcript.trim();const low=raw.toLowerCase();let idx=low.indexOf('borfoli'),wlen=7;if(idx<0){idx=low.indexOf('bor-foli');wlen=8;}if(idx>=0){let cmd=raw.slice(idx+wlen).trim();while(cmd.length&&(cmd[0]===','||cmd[0]===':'||cmd[0]===' '))cmd=cmd.slice(1).trim();if(cmd){inp.value=cmd;send();}}};wakeRecog.onend=()=>{if(wakeOn){try{wakeRecog.start();}catch(e){}}};wakeRecog.start();}\n"
 "// ── Send ──\n"
 "async function send(){const msg=inp.value.trim();if(!msg&&!pendingImg)return;if(pendingImg){const imgData=pendingImg;const imgMsg=msg||'What do you see?';clearImg();inp.value='';addMsg('user',imgMsg+' [image]');setAct(true,'GEMINI VISION...');try{const res=await fetch('/vision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:imgData,prompt:imgMsg})});const data=await res.json();setAct(false);addMsg('assistant',data.reply);}catch(e){setAct(false);addMsg('assistant','Vision error.');}return;}inp.value='';inp.style.height='auto';addMsg('user',msg);setAct(true,'ROUTING...');msgs.scrollTop=msgs.scrollHeight;try{const res=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});const data=await res.json();setAct(false);addMsg('assistant',data.reply);if(data.intent){const tg=document.getElementById('intent-tag');tg.textContent=IL[data.intent]||data.intent.toUpperCase();tg.classList.add('on');setTimeout(()=>tg.classList.remove('on'),4000);}if(data.intent==='task')loadTasks();}catch(e){setAct(false);addMsg('assistant','Connection error.');}}\n"
 "function clearChat(){msgs.innerHTML='<div class=\"msg assistant\"><div class=\"av assistant\">B</div><div class=\"bubble\">Online. What do you need?</div></div>';}\n"
