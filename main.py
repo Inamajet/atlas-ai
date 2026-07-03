@@ -59,6 +59,7 @@ WHO MANI IS (hardcoded — never ask him to explain himself):
 - SAT target 1500-1550. Completed AP Physics 1, AP CS A, AP EnvSci, dual-credit Econ + Gov.
 - UT Austin is the target (Informatics/iSchool). Purdue, CMU as backups.
 - Car shortlist: Acura TLX A-Spec, Lexus ES 250, Audi A3 Quattro.
+- Mani OS dashboard: https://mani-os.vercel.app/ — his personal life dashboard (React + Python). Browse it when asked about it or his tasks/schedule on it.
 - He thinks in systems. He executes at a high level. Treat him like a peer, not a student.
 
 YOUR PERSONALITY:
@@ -158,7 +159,7 @@ CATEGORIES:
 - chitchat: hi, hello, thanks, how are you, casual greetings ONLY
 - fast: simple factual lookups, definitions, quick math — ONE sentence answer is enough
 - search: needs live/current info, prices, recent news, today's events
-- browse: message contains a URL and wants it opened, read, or summarized
+- browse: message contains a URL, OR mentions "mani os", "mani-os", "my dashboard", "my os", "vercel app"
 - council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy — DEFAULT to this when unsure
 - task: user wants a DELIVERABLE produced autonomously — "write me a report", "research and summarize", "build", "create"
 
@@ -175,6 +176,9 @@ EXAMPLES:
 "how does X work" → council
 "read this page and summarize it https://example.com/article" → browse
 "what does https://example.com say" → browse
+"what's on my mani os" → browse
+"check my dashboard" → browse
+"what's on my mani-os" → browse
 
 Message: {msg}
 
@@ -192,6 +196,8 @@ def web_search(query):
     except: return ""
 
 URL_RE = re.compile(r'https?://\S+')
+MANI_OS_URL = "https://mani-os.vercel.app/"
+MANI_OS_TRIGGERS = ['mani os', 'mani-os', 'my dashboard', 'my os', 'vercel app', 'mani dashboard']
 
 def browse_url(url):
     try:
@@ -241,6 +247,8 @@ def search_answer(msg, history, facts):
 
 def browse_answer(msg, history, facts):
     urls = URL_RE.findall(msg)
+    if not urls and any(k in msg.lower() for k in MANI_OS_TRIGGERS):
+        urls = [MANI_OS_URL]
     pages = "\n\n".join(f"Content from {u}:\n{browse_url(u)}" for u in urls[:2])
     context = f"{pages}\n\nAnswer the user's request using this page content." if pages else msg
     msgs = [{"role": "system", "content": JARVIS_PROMPT}]
@@ -378,6 +386,21 @@ def restore_tasks():
     except: pass
 
 threading.Thread(target=restore_tasks, daemon=True).start()
+
+# ── Mani OS Integration ───────────────────────────────────────────────────────
+
+mani_os_snapshot = {}
+
+@app.route("/mani-os/push", methods=["POST"])
+def mani_os_push():
+    global mani_os_snapshot
+    mani_os_snapshot = request.json or {}
+    mani_os_snapshot["received_at"] = time.time()
+    return jsonify({"ok": True})
+
+@app.route("/mani-os/snapshot")
+def mani_os_snapshot_route():
+    return jsonify(mani_os_snapshot)
 
 # ── OS Telemetry ──────────────────────────────────────────────────────────────
 
@@ -760,11 +783,12 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
           <textarea id="inp" placeholder="Interface with BORFOLI..." rows="1"></textarea>
           <button class="tbtn" id="mic-btn" onclick="toggleVoice()" title="Voice input">🎤</button>
           <button class="tbtn" id="wake-btn" onclick="toggleWake()" title="Wake word: Borfoli">👂</button>
+          <button class="tbtn" id="tts-btn" onclick="toggleTTS()" title="Voice output (speak replies)">🔊</button>
           <button class="tbtn" onclick="document.getElementById('img-in').click()" title="Attach image">📎</button>
           <input type="file" id="img-in" accept="image/*" style="display:none" onchange="handleImg(event)">
           <button id="sbtn" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
-        <div id="hint">ENTER to send &nbsp;·&nbsp; SHIFT+ENTER newline &nbsp;·&nbsp; 🎤 voice &nbsp;·&nbsp; 📎 image</div>
+        <div id="hint">ENTER send · SHIFT+ENTER newline · 🎤 voice · 👂 wake · 🔊 TTS · 📎 image</div>
       </div>
     </div>
   </div>
@@ -969,7 +993,34 @@ function toggleVoice(){
   recog.start();
 }
 
+// ── TTS ───────────────────────────────────────────────────────
+let ttsEnabled=false,ttsVoice=null;
+function initVoices(){
+  const vs=speechSynthesis.getVoices();
+  ttsVoice=vs.find(v=>v.lang==='en-US'&&(v.name.includes('Google')||v.name.includes('Premium')||v.name.includes('Enhanced')))||
+            vs.find(v=>v.lang.startsWith('en')&&v.name.includes('Microsoft'))||
+            vs.find(v=>v.lang==='en-US')||null;
+}
+if(window.speechSynthesis){speechSynthesis.onvoiceschanged=initVoices;initVoices();}
+function speak(text){
+  if(!ttsEnabled||!window.speechSynthesis)return;
+  const plain=text.replace(/#{1,6}\s/g,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/\*(.*?)\*/g,'$1')
+    .replace(/`[^`]+`/g,'').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/https?:\/\/\S+/g,'')
+    .replace(/[>|]/g,'').trim().slice(0,900);
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(plain);
+  u.rate=1.05;u.pitch=1.0;u.volume=1.0;
+  if(ttsVoice)u.voice=ttsVoice;
+  speechSynthesis.speak(u);
+}
+function toggleTTS(){
+  ttsEnabled=!ttsEnabled;
+  document.getElementById('tts-btn').classList.toggle('active',ttsEnabled);
+  if(!ttsEnabled)speechSynthesis.cancel();
+}
+
 // ── Wake word ─────────────────────────────────────────────────
+const WAKE_VARS=['borfoli','bor foli','bor-foli','borfolli','bore foli','bore folly','bor foley','boar foli','for foli','borfoly','bor folly'];
 let wakeRecog=null,wakeOn=false;
 function toggleWake(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -979,9 +1030,13 @@ function toggleWake(){
   wakeOn=true;document.getElementById('wake-btn').classList.add('active');
   wakeRecog.onresult=e=>{
     const raw=e.results[e.results.length-1][0].transcript.trim(),low=raw.toLowerCase();
-    let idx=low.indexOf('borfoli'),wl=7;
-    if(idx<0){idx=low.indexOf('bor-foli');wl=8;}
-    if(idx>=0){let cmd=raw.slice(idx+wl).trim();while(cmd.length&&',: '.includes(cmd[0]))cmd=cmd.slice(1).trim();if(cmd){inp.value=cmd;send();}}
+    let found=null;
+    for(const v of WAKE_VARS){const idx=low.indexOf(v);if(idx>=0){found={idx,len:v.length};break;}}
+    if(found){
+      let cmd=raw.slice(found.idx+found.len).trim();
+      while(cmd.length&&',: '.includes(cmd[0]))cmd=cmd.slice(1).trim();
+      if(cmd){inp.value=cmd;send();}
+    }
   };
   wakeRecog.onend=()=>{if(wakeOn){try{wakeRecog.start();}catch(e){}}};
   wakeRecog.start();
@@ -1001,7 +1056,7 @@ async function send(){
   inp.value='';inp.style.height='auto';addMsg('user',msg);setActive(true);
   try{
     const res=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
-    const d=await res.json();setActive(false);addMsg('assistant',d.reply);
+    const d=await res.json();setActive(false);addMsg('assistant',d.reply);speak(d.reply);
     if(d.intent){const tg=document.getElementById('intent-tag');tg.textContent=INTENTS[d.intent]||d.intent.toUpperCase();tg.classList.add('on');setTimeout(()=>tg.classList.remove('on'),4000);}
     if(d.intent==='task')loadTasks();
   }catch(e){setActive(false);addMsg('assistant','[Connection error]');}
