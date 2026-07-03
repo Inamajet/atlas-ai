@@ -198,7 +198,7 @@ def web_search(query):
 URL_RE = re.compile(r'https?://\S+')
 MANI_OS_URL = "https://mani-os.vercel.app/"
 MANI_OS_TRIGGERS = ['mani os', 'mani-os', 'my dashboard', 'my os', 'vercel app', 'mani dashboard']
-MANI_OS_API      = "https://mani-os.vercel.app/api/handler"
+MANI_OS_API      = "https://mani-os.vercel.app/api/sync"
 MANI_OS_SYNC_HASH = os.environ.get("MANI_OS_SYNC_HASH", "mani")
 
 def mani_os_get():
@@ -206,6 +206,8 @@ def mani_os_get():
         r = requests.get(MANI_OS_API, headers={"x-sync-hash": MANI_OS_SYNC_HASH}, timeout=10)
         if r.status_code == 200:
             return r.json(), None
+        if r.status_code == 404:
+            return {}, None  # no cloud state yet — start fresh
         return None, f"HTTP {r.status_code}: {r.text[:200]}"
     except Exception as e:
         return None, str(e)
