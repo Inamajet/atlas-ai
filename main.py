@@ -198,6 +198,109 @@ def web_search(query):
 URL_RE = re.compile(r'https?://\S+')
 MANI_OS_URL = "https://mani-os.vercel.app/"
 MANI_OS_TRIGGERS = ['mani os', 'mani-os', 'my dashboard', 'my os', 'vercel app', 'mani dashboard']
+MANI_OS_API      = "https://mani-os.vercel.app/api/handler"
+MANI_OS_SYNC_HASH = os.environ.get("MANI_OS_SYNC_HASH", "mani")
+
+def mani_os_get():
+    try:
+        r = requests.get(MANI_OS_API, headers={"x-sync-hash": MANI_OS_SYNC_HASH}, timeout=10)
+        if r.status_code == 200:
+            return r.json(), None
+        return None, f"HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return None, str(e)
+
+def mani_os_put(state):
+    try:
+        r = requests.post(MANI_OS_API, json=state,
+                          headers={"x-sync-hash": MANI_OS_SYNC_HASH, "Content-Type": "application/json"},
+                          timeout=10)
+        return r.status_code == 200, f"HTTP {r.status_code}"
+    except Exception as e:
+        return False, str(e)
+
+def mani_os_log_calories(amount, mode="add"):
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    current = state.get("calories", 0) if state.get("caloriesDate") == today_str else 0
+    new_val = int(current + amount) if mode == "add" else int(amount)
+    state["calories"] = new_val
+    state["caloriesDate"] = today_str
+    ok, err2 = mani_os_put(state)
+    return f"Logged {int(amount)} cal → **{new_val} cal today** on Mani OS." if ok else f"Read OK, write failed: {err2}"
+
+def mani_os_log_protein(amount, mode="add"):
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    current = state.get("protein", 0) if state.get("proteinDate") == today_str else 0
+    new_val = int(current + amount) if mode == "add" else int(amount)
+    state["protein"] = new_val
+    state["proteinDate"] = today_str
+    ok, err2 = mani_os_put(state)
+    return f"Logged {int(amount)}g protein → **{new_val}g today** on Mani OS." if ok else f"Read OK, write failed: {err2}"
+
+def mani_os_add_task(title, why=""):
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+    tasks = state.get("tasks") or []
+    tasks.insert(0, {"id": str(uuid.uuid4()), "title": title, "why": why,
+                     "createdAt": int(time.time() * 1000), "done": False})
+    state["tasks"] = tasks
+    ok, err2 = mani_os_put(state)
+    return f"Task **'{title}'** added to Mani OS." if ok else f"Read OK, write failed: {err2}"
+
+def mani_os_log_weight(weight):
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    state["weight"] = float(weight)
+    hist = state.get("weightHistory") or []
+    hist.append({"date": today_str, "weight": float(weight)})
+    state["weightHistory"] = hist[-180:]
+    ok, err2 = mani_os_put(state)
+    return f"Weight **{weight} lbs** logged on Mani OS." if ok else f"Read OK, write failed: {err2}"
+
+def mani_os_complete_task(search):
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+    tasks = state.get("tasks") or []
+    srch = search.lower()
+    matched = next((t for t in tasks if srch in t.get("title", "").lower()), None)
+    if not matched:
+        return f"No task matching '{search}' found on Mani OS."
+    matched["done"] = True
+    state["tasks"] = tasks
+    ok, err2 = mani_os_put(state)
+    return f"Task **'{matched['title']}'** marked done on Mani OS." if ok else f"Read OK, write failed: {err2}"
+
+_MANI_WRITE_RE = [
+    (re.compile(r'(?:log|add|ate|eaten|had|consumed|track(?:ed)?)\s+(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)', re.I), 'cal'),
+    (re.compile(r'(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)\s+(?:log(?:ged)?|add(?:ed)?)', re.I), 'cal'),
+    (re.compile(r'(?:log|add|track|ate|consumed)\s+(\d+(?:\.\d+)?)\s*g?(?:rams?)?\s*(?:of\s+)?protein', re.I), 'protein'),
+    (re.compile(r'(?:add|create|new)\s+task[:\s]+(.+?)(?:\s+(?:to|on)\s+mani.*)?$', re.I), 'task'),
+    (re.compile(r'(?:log|add|track)\s+(?:my\s+)?weight\s+(?:(?:as|is|of)\s+)?(\d+(?:\.\d+)?)', re.I), 'weight'),
+    (re.compile(r'(?:my\s+)?weight(?:\s+is(?:\s+today)?|\s+today\s+is)?\s+(\d+(?:\.\d+)?)(?:\s+lbs?)?', re.I), 'weight'),
+    (re.compile(r'(?:complete|finish|done with|mark(?:\s+as)?\s+done)\s+task[:\s]+(.+)', re.I), 'task_done'),
+]
+
+def try_mani_os_action(msg):
+    for pattern, action in _MANI_WRITE_RE:
+        m = pattern.search(msg)
+        if m:
+            val = m.group(1).strip()
+            if action == 'cal':      return mani_os_log_calories(float(val))
+            if action == 'protein':  return mani_os_log_protein(float(val))
+            if action == 'task':     return mani_os_add_task(val)
+            if action == 'weight':   return mani_os_log_weight(float(val))
+            if action == 'task_done': return mani_os_complete_task(val)
+    return None
 
 def browse_url(url):
     try:
@@ -431,6 +534,21 @@ def chat():
     msg = data.get("message", "").strip()
     if not msg: return jsonify({"reply": "Say something."})
     facts, history = load_memory()
+
+    # ── Mani OS write actions ─────────────────────────────────────────────
+    action_result = try_mani_os_action(msg)
+    if action_result:
+        confirm_msgs = [
+            {"role": "system", "content": JARVIS_PROMPT},
+            {"role": "user", "content": f"Action just executed: {action_result}\nUser message was: {msg}\n\nConfirm in 1-2 sentences max."}
+        ]
+        reply = groq_chat(FAST_MODEL, confirm_msgs, max_tokens=120)
+        history.append({"role": "user", "content": msg})
+        history.append({"role": "assistant", "content": reply})
+        save_memory(facts, history)
+        return jsonify({"reply": reply, "intent": "action"})
+    # ─────────────────────────────────────────────────────────────────────
+
     history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
     intent = classify_intent(msg, history_snippet)
 
