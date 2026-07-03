@@ -16,6 +16,8 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 def require_auth():
     if not APP_PASSWORD:
         return
+    if request.path.startswith('/mani-os/'):
+        return  # Mani OS sync endpoints are CORS-open (no AI access, just fitness data)
     auth = request.authorization
     if not auth or auth.password != APP_PASSWORD:
         return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Borfoli"'})
@@ -198,26 +200,25 @@ def web_search(query):
 URL_RE = re.compile(r'https?://\S+')
 MANI_OS_URL = "https://mani-os.vercel.app/"
 MANI_OS_TRIGGERS = ['mani os', 'mani-os', 'my dashboard', 'my os', 'vercel app', 'mani dashboard']
-MANI_OS_API      = "https://mani-os.vercel.app/api/sync"
-MANI_OS_SYNC_HASH = os.environ.get("MANI_OS_SYNC_HASH", "mani")
+MANI_STATE_ROW = 999  # reserved row in atlas_memory for Mani OS state
 
 def mani_os_get():
     try:
-        r = requests.get(MANI_OS_API, headers={"x-sync-hash": MANI_OS_SYNC_HASH}, timeout=10)
-        if r.status_code == 200:
-            return r.json(), None
-        if r.status_code == 404:
-            return {}, None  # no cloud state yet — start fresh
-        return None, f"HTTP {r.status_code}: {r.text[:200]}"
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/atlas_memory?id=eq.{MANI_STATE_ROW}", headers=HEADERS, timeout=10)
+        rows = r.json()
+        if rows and rows[0].get("facts"):
+            return json.loads(rows[0]["facts"]), None
+        return {}, None
     except Exception as e:
         return None, str(e)
 
 def mani_os_put(state):
     try:
-        r = requests.post(MANI_OS_API, json=state,
-                          headers={"x-sync-hash": MANI_OS_SYNC_HASH, "Content-Type": "application/json"},
-                          timeout=10)
-        return r.status_code == 200, f"HTTP {r.status_code}"
+        payload = {"id": MANI_STATE_ROW, "facts": json.dumps(state), "history": "[]"}
+        r = requests.post(f"{SUPABASE_URL}/rest/v1/atlas_memory",
+                          headers={**HEADERS, "Prefer": "resolution=merge-duplicates"},
+                          json=payload, timeout=10)
+        return r.status_code in (200, 201), f"HTTP {r.status_code}"
     except Exception as e:
         return False, str(e)
 
@@ -492,20 +493,29 @@ def restore_tasks():
 
 threading.Thread(target=restore_tasks, daemon=True).start()
 
-# ── Mani OS Integration ───────────────────────────────────────────────────────
+# ── Mani OS State Relay ───────────────────────────────────────────────────────
 
-mani_os_snapshot = {}
+_CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
 
-@app.route("/mani-os/push", methods=["POST"])
-def mani_os_push():
-    global mani_os_snapshot
-    mani_os_snapshot = request.json or {}
-    mani_os_snapshot["received_at"] = time.time()
-    return jsonify({"ok": True})
-
-@app.route("/mani-os/snapshot")
-def mani_os_snapshot_route():
-    return jsonify(mani_os_snapshot)
+@app.route("/mani-os/state", methods=["GET", "POST", "OPTIONS"])
+def mani_os_state_endpoint():
+    if request.method == "OPTIONS":
+        return Response("", 204, _CORS)
+    if request.method == "GET":
+        state, err = mani_os_get()
+        resp = jsonify({"error": err} if err else (state or {}))
+        for k, v in _CORS.items(): resp.headers[k] = v
+        return resp
+    # POST — frontend pushing its full state
+    state = request.json or {}
+    ok, msg = mani_os_put(state)
+    resp = jsonify({"ok": ok})
+    for k, v in _CORS.items(): resp.headers[k] = v
+    return resp
 
 # ── OS Telemetry ──────────────────────────────────────────────────────────────
 
