@@ -284,13 +284,23 @@ def mani_os_complete_task(search):
     return f"Task **'{matched['title']}'** marked done on Mani OS." if ok else f"Read OK, write failed: {err2}"
 
 _MANI_WRITE_RE = [
+    # SET calories (change/set/update/correct — replaces today's count)
+    (re.compile(r'(?:change|set|update|fix|correct|make)\s+(?:my\s+)?(?:cal(?:ories?)?|kcal)\s+(?:to|as|=)\s+(\d+(?:\.\d+)?)', re.I), 'cal_set'),
+    (re.compile(r'(?:change|set|update|fix|correct)\s+(?:it\s+)?to\s+(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)', re.I), 'cal_set'),
+    (re.compile(r'(?:my\s+)?(?:total\s+)?cal(?:ories?)?\s+(?:is|are|should\s+be|=)\s+(\d+(?:\.\d+)?)', re.I), 'cal_set'),
+    # ADD calories
     (re.compile(r'(?:log|add|ate|eaten|had|consumed|track(?:ed)?)\s+(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)', re.I), 'cal'),
     (re.compile(r'(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)\s+(?:log(?:ged)?|add(?:ed)?)', re.I), 'cal'),
+    # SET protein
+    (re.compile(r'(?:change|set|update|fix)\s+(?:my\s+)?protein\s+(?:to|as|=)\s+(\d+(?:\.\d+)?)', re.I), 'protein_set'),
+    # ADD protein
     (re.compile(r'(?:log|add|track|ate|consumed)\s+(\d+(?:\.\d+)?)\s*g?(?:rams?)?\s*(?:of\s+)?protein', re.I), 'protein'),
+    # Tasks
     (re.compile(r'(?:add|create|new)\s+task[:\s]+(.+?)(?:\s+(?:to|on)\s+mani.*)?$', re.I), 'task'),
+    (re.compile(r'(?:complete|finish|done with|mark(?:\s+as)?\s+done)\s+task[:\s]+(.+)', re.I), 'task_done'),
+    # Weight
     (re.compile(r'(?:log|add|track)\s+(?:my\s+)?weight\s+(?:(?:as|is|of)\s+)?(\d+(?:\.\d+)?)', re.I), 'weight'),
     (re.compile(r'(?:my\s+)?weight(?:\s+is(?:\s+today)?|\s+today\s+is)?\s+(\d+(?:\.\d+)?)(?:\s+lbs?)?', re.I), 'weight'),
-    (re.compile(r'(?:complete|finish|done with|mark(?:\s+as)?\s+done)\s+task[:\s]+(.+)', re.I), 'task_done'),
 ]
 
 def try_mani_os_action(msg):
@@ -298,11 +308,13 @@ def try_mani_os_action(msg):
         m = pattern.search(msg)
         if m:
             val = m.group(1).strip()
-            if action == 'cal':      return mani_os_log_calories(float(val))
-            if action == 'protein':  return mani_os_log_protein(float(val))
-            if action == 'task':     return mani_os_add_task(val)
-            if action == 'weight':   return mani_os_log_weight(float(val))
-            if action == 'task_done': return mani_os_complete_task(val)
+            if action == 'cal':         return mani_os_log_calories(float(val), mode="add")
+            if action == 'cal_set':     return mani_os_log_calories(float(val), mode="set")
+            if action == 'protein':     return mani_os_log_protein(float(val), mode="add")
+            if action == 'protein_set': return mani_os_log_protein(float(val), mode="set")
+            if action == 'task':        return mani_os_add_task(val)
+            if action == 'weight':      return mani_os_log_weight(float(val))
+            if action == 'task_done':   return mani_os_complete_task(val)
     return None
 
 def browse_url(url):
