@@ -303,6 +303,33 @@ _MANI_READ_KW = [
     'my weight','my streak','what did i','how much','status','summary',
 ]
 
+# Requests that MUST go to the agent loop (real tools) — never the text-only paths.
+# Deterministic so Borfoli can't refuse OR hallucinate doing it.
+_AGENT_KW = [
+    'email','gmail','inbox','unread','mailbox','my mail',
+    'open ','launch ','my browser','in my browser','my screen','on my screen',
+    'screenshot','my pc','my computer','my desktop','my files','run command',
+    'look up','search the web','google ','find online','browse ',
+    "what's on my", 'whats on my', 'current price', 'latest news',
+    'send email','send a message','send an email','read my','check my email',
+    'click ','type ','scroll ','my inbox',
+]
+def _wants_agent(msg_lo):
+    return any(k in msg_lo for k in _AGENT_KW)
+
+def _agent_followup(msg_lo, history):
+    """Keep short follow-ups in the agent loop when the recent turn was agent-y
+    (e.g. 'read me the important ones' right after opening Gmail)."""
+    if len(msg_lo) > 70:
+        return False
+    recent = " ".join(h.get("content", "") for h in history[-2:]).lower()
+    ctx = any(k in recent for k in ['email', 'gmail', 'inbox', 'screen', 'opened',
+                                    'browser', 'searched', 'found', 'unread', 'file'])
+    cont = any(k in msg_lo for k in ['read', 'important', 'summar', 'which', 'them',
+                                     'those', 'that one', 'first', 'next', 'more',
+                                     'continue', 'go on', 'open it', 'reply', 'the ones'])
+    return ctx and cont
+
 _MANI_OS_ARRAY_FIELDS = [
     'weightHistory','workoutSessions','pullupLog','gratitudeLog',
     'loreLog','fragranceLog','netWorthHistory','trades','tasks',
@@ -622,7 +649,12 @@ def agent_answer(msg, history, facts):
         "the click missed. "
         "Running shell commands and sending email require his approval on his machine — just call "
         "the tool, he'll approve or decline. Chain tools as needed, then give a short, direct "
-        "answer. Always confirm exactly what you did."]
+        "answer. "
+        "CRITICAL HONESTY RULE: NEVER claim you opened, read, saw, sent, or changed anything unless "
+        "a tool call ACTUALLY returned a success result. Do not invent emails, screen contents, or "
+        "outcomes. If a tool returns that the PC agent is offline / didn't respond, tell him plainly "
+        "that his PC agent (borfoli_agent.py) isn't running, so you can't reach his machine — don't "
+        "pretend it worked. Only report what the tools actually returned."]
     if facts: sys_blocks.append(f"Memory:\n{facts}")
     if os_ctx: sys_blocks.append(os_ctx)
 
@@ -982,8 +1014,13 @@ def chat():
         return jsonify({"reply": reply, "intent": "mani_read"})
     # ─────────────────────────────────────────────────────────────────────
 
-    history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
-    intent = classify_intent(msg, history_snippet)
+    # Deterministic route: email/PC/browser/web requests ALWAYS use the agent's
+    # real tools — never the text-only paths that refuse or hallucinate.
+    if _wants_agent(msg_lo) or _agent_followup(msg_lo, history):
+        intent = "agent"
+    else:
+        history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
+        intent = classify_intent(msg, history_snippet)
 
     if intent == "chitchat":
         msgs = [{"role": "system", "content": JARVIS_PROMPT}, {"role": "user", "content": msg}]
