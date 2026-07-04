@@ -1296,7 +1296,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
 #sbtn{width:34px;height:34px;background:linear-gradient(135deg,#00e0ff,#00a8d4);border:none;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 20px rgba(0,212,255,0.4);transition:all 0.15s;}
 #sbtn:hover{box-shadow:0 0 30px rgba(0,212,255,0.6);transform:translateY(-1px);}
 #sbtn svg{width:12px;height:12px;fill:#000814;}
-#hint{font-family:var(--mono);font-size:7.5px;color:var(--text-muted);margin-top:5px;letter-spacing:0.07em;}
+#hint{font-family:var(--mono);font-size:8px;color:var(--text-muted);margin-top:7px;letter-spacing:0.07em;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+#voice-sel{background:rgba(0,10,24,0.9);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:9px;padding:3px 6px;max-width:230px;cursor:pointer;outline:none;}
+#voice-sel:hover{border-color:var(--border-hi);}
 
 /* ── TASK DRAWER ─────────────────────────── */
 #drawer{position:fixed;right:0;top:0;height:100vh;width:380px;background:var(--panel);border-left:1px solid var(--border);transform:translateX(100%);transition:transform 0.25s cubic-bezier(0.4,0,0.2,1);z-index:400;display:flex;flex-direction:column;}
@@ -1370,7 +1372,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
           <input type="file" id="img-in" accept="image/*" style="display:none" onchange="handleImg(event)">
           <button id="sbtn" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
-        <div id="hint">ENTER send · SHIFT+ENTER newline · 🎤 voice · 👂 wake · 🔊 TTS · 📎 image</div>
+        <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "Bor") · 🔊 TTS
+          <select id="voice-sel" title="Pick Borfoli's voice (Edge has the realistic ones)"></select>
+        </div>
       </div>
     </div>
   </div>
@@ -1579,10 +1583,35 @@ function toggleVoice(){
 let ttsEnabled=false,ttsVoice=null,serverTTS=null,ttsAudio=null;
 function initVoices(){
   const vs=speechSynthesis.getVoices();
-  const pick=n=>vs.find(v=>v.name.toLowerCase().includes(n));
-  ttsVoice=pick('natural')||pick('neural')||pick('online')||pick('aria')||pick('jenny')||pick('guy')||pick('ryan')||
-           vs.find(v=>v.lang==='en-US'&&v.name.includes('Google'))||
-           vs.find(v=>v.lang==='en-US')||vs[0]||null;
+  if(!vs.length)return;
+  // ENGLISH ONLY — never pick a foreign-accent voice
+  const en=vs.filter(v=>/^en([-_]|$)/i.test(v.lang));
+  const pool=en.length?en:vs;
+  // Restore a saved manual choice if present
+  const saved=localStorage.getItem('borfoli_voice');
+  if(saved){const m=pool.find(v=>v.name===saved);if(m){ttsVoice=m;buildVoicePicker(pool);return;}}
+  // Prefer high-quality US natural voices by name, then any US natural, then US offline
+  const usNat=pool.filter(v=>/^en[-_]us/i.test(v.lang)&&/Natural|Neural|Online/i.test(v.name));
+  const byName=n=>usNat.find(v=>v.name.includes(n));
+  ttsVoice=byName('Aria')||byName('Guy')||byName('Andrew')||byName('Ava')||byName('Jenny')||byName('Emma')||byName('Michelle')||byName('Roger')||usNat[0]||
+           pool.find(v=>/^en[-_]us/i.test(v.lang)&&!/Online/i.test(v.name))||
+           pool.find(v=>/^en[-_]us/i.test(v.lang))||pool.find(v=>/^en/i.test(v.lang))||pool[0]||null;
+  buildVoicePicker(pool);
+}
+function buildVoicePicker(pool){
+  const sel=document.getElementById('voice-sel');
+  if(!sel||sel._built)return;sel._built=true;
+  const us=pool.filter(v=>/^en[-_]us/i.test(v.lang));
+  const list=(us.length?us:pool).slice().sort((a,b)=>{
+    const nat=v=>/Natural|Neural/i.test(v.name)?0:1;return nat(a)-nat(b);
+  });
+  list.forEach(v=>{const o=document.createElement('option');o.value=v.name;
+    o.textContent=v.name.replace('Microsoft ','').replace(' Multilingual','').replace(' Online','').replace(/ - .*/,'');
+    if(ttsVoice&&v.name===ttsVoice.name)o.selected=true;sel.appendChild(o);});
+  sel.onchange=()=>{const v=pool.find(x=>x.name===sel.value);if(!v)return;
+    ttsVoice=v;localStorage.setItem('borfoli_voice',v.name);
+    const u=new SpeechSynthesisUtterance('Voice set. This is how I sound.');u.voice=v;u.lang=v.lang||'en-US';
+    speechSynthesis.cancel();speechSynthesis.speak(u);};
 }
 if(window.speechSynthesis){speechSynthesis.onvoiceschanged=initVoices;initVoices();}
 function stripMd(text){
@@ -1610,9 +1639,10 @@ async function speak(text){
   }
   // Fallback: best available browser voice
   if(!window.speechSynthesis)return;
+  if(!ttsVoice)initVoices();
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(plain);
-  u.rate=0.97;u.pitch=1.0;u.volume=1.0;
+  u.rate=0.97;u.pitch=1.0;u.volume=1.0;u.lang='en-US';
   if(ttsVoice)u.voice=ttsVoice;
   speechSynthesis.speak(u);
 }
@@ -1622,37 +1652,51 @@ function toggleTTS(){
   if(!ttsEnabled){speechSynthesis.cancel();if(ttsAudio)ttsAudio.pause();}
 }
 
-// ── Wake word: "bor" / "borfoli" + close mishearings, two-phase ──
-// Matches the wake word as a whole word, across STT alternatives. Say "Bor" or
-// "Borfoli" then your command in one breath — or just the wake word, then speak.
-const WAKE_RE=/\b(bor|borf\w*|bore|bored|boron|board|buffalo|portfolio|for ?fol(i|y|io)|bore ?fol\w*|boar ?fol\w*|before ?e?)\b/i;
+// ── Wake word: "bor" / "borfoli" — forgiving fuzzy match, two-phase ──
+// Say "Bor" or "Borfoli" then your command in one breath, OR just the wake word,
+// hear the beep, then speak your command.
 let wakeRecog=null,wakeOn=false,wakeArmed=false;
 function beep(f){try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f||880;g.gain.value=0.08;o.start();o.stop(a.currentTime+0.1);}catch(e){}}
+function wakeHit(w){
+  w=(w||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
+  if(!w)return false;
+  if(/\bbor\b/.test(w))return true;                                    // exact "bor"
+  if(w.includes('borfo')||w.includes('orfol')||w.includes('portfol')||w.includes('borph'))return true; // borfoli-ish
+  return /\b(borf\w*|boar?f\w*|bore|bored|board|boron|buffalo|before|boarding|boredom|forfe\w*)\b/.test(w); // mishearings
+}
 function toggleWake(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Voice not supported.');return;}
   if(wakeOn){wakeOn=false;wakeArmed=false;wakeRecog&&wakeRecog.stop();document.getElementById('wake-btn').classList.remove('active');return;}
-  wakeRecog=new SR();wakeRecog.continuous=true;wakeRecog.interimResults=false;wakeRecog.lang='en-US';wakeRecog.maxAlternatives=4;
+  wakeRecog=new SR();wakeRecog.continuous=true;wakeRecog.interimResults=false;wakeRecog.lang='en-US';wakeRecog.maxAlternatives=5;
   wakeOn=true;document.getElementById('wake-btn').classList.add('active');
   wakeRecog.onresult=e=>{
     const res=e.results[e.results.length-1];
     if(!res.isFinal)return;
-    let alts=[];for(let i=0;i<res.length;i++)alts.push((res[i].transcript||'').trim());
-    // If armed (wake word heard a moment ago), this whole utterance is the command.
-    if(wakeArmed){wakeArmed=false;const cmd=alts[0];if(cmd){beep(1200);inp.value=cmd;send();}return;}
-    // Otherwise hunt for the wake word in any alternative.
-    let hit=null;
-    for(const a of alts){const m=a.toLowerCase().match(WAKE_RE);if(m){hit={a,idx:m.index,len:m[0].length};break;}}
-    if(hit){
-      beep(880);
-      let cmd=hit.a.slice(hit.idx+hit.len).trim();
-      while(cmd.length&&',:.- '.includes(cmd[0]))cmd=cmd.slice(1).trim();
-      if(cmd){inp.value=cmd;send();}
-      else{wakeArmed=true;setTimeout(()=>{wakeArmed=false;},7000);} // listen for the command next
+    const raw=(res[0].transcript||'').trim();
+    if(!raw)return;
+    // Armed: the whole utterance is the command.
+    if(wakeArmed){wakeArmed=false;beep(1200);inp.value=raw;send();return;}
+    // Check every STT alternative for the wake word.
+    let chosen=null;
+    for(let i=0;i<res.length;i++){const a=(res[i].transcript||'').trim();if(a.split(/\s+/).some(wakeHit)){chosen=a;break;}}
+    if(!chosen)return;
+    beep(880);
+    // Drop leading wake-ish words, keep the command.
+    let words=chosen.split(/\s+/);
+    while(words.length&&wakeHit(words[0]))words.shift();
+    const cmd=words.join(' ').replace(/^[\s,:.\-]+/,'').trim();
+    if(cmd){inp.value=cmd;send();}
+    else{wakeArmed=true;setTimeout(()=>{wakeArmed=false;},8000);} // listen for the command next
+  };
+  wakeRecog.onerror=ev=>{
+    if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){
+      wakeOn=false;document.getElementById('wake-btn').classList.remove('active');
+      alert('Mic permission is needed for the wake word. Allow the mic and try again.');
     }
   };
-  wakeRecog.onend=()=>{if(wakeOn){try{wakeRecog.start();}catch(e){}}};
-  wakeRecog.start();
+  wakeRecog.onend=()=>{if(wakeOn){setTimeout(()=>{try{wakeRecog.start();}catch(e){}},250);}};
+  try{wakeRecog.start();}catch(e){}
 }
 
 // ── Send ──────────────────────────────────────────────────────
