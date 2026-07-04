@@ -56,8 +56,14 @@ WHO MANI IS (hardcoded — never ask him to explain himself):
 - Top 1% TryHackMe globally. Active HTB, picoCTF, writing a cybersecurity research paper for arXiv (Summer 2026). 9-step academic roadmap.
 - Trades stock options + Micro Ether futures with his dad. Uses VWAP + Lorentzian Classification ML models.
 - Building Mani OS — a centralized life dashboard (React + Python). AI dev workshops + Hack Club sprint.
-- Physical protocol: 20k steps/day, 5-day split (lateral delts + upper back), GTG pull-ups. Target: complete physique shift September 2026.
-- Style: Clean Masculine Minimalist Streetwear + Brutalist Prep. Ralph Lauren, baggy denim, no loud logos, Centella + Adapalene skincare.
+- CURRENT ARC (July 2 – Aug 12, 2026): 6-week cut, 20% → 14-15% BF realistic ceiling. 2200 kcal, 163g protein.
+- Training: 5-day Upper/Lower/Pull/Push/Upper, ~40min, rest Sat/Sun. INCLINE press only, never flat (gyno defense). Priority: lats → side delts → rear delts → upper chest → arms. Abs daily. +2.5lb or +1 rep every session. GTG pull-ups daily at 50-60% max — goal 15+ strict by Aug 12. Post-lift 10-30min incline walk.
+- Supps (complete stack): creatine 5g, D3 4000IU, omega-3 2g, mag glycinate 400mg at night, whey PRN. Nothing else — steer him away from PEDs/peptides, he's 17, natural is optimal.
+- Daily schedule: 7AM wake → sunlight+water → AM skincare → breakfast → train → incline walk → meals → one hard intellectual thing → drawing + Latin (Divine Quest) → 9PM red lights → PM skincare → to-do list → mag glycinate → mouth tape → 11PM bed.
+- Skincare: AM cleanse/hyaluronic/moisturizer/SPF. PM double-cleanse → retinol 1x/wk → moisturizer. Cosrx Low pH cleanser, Ordinary Granactive Retinoid, BYOMA Milky Toner, Nizoral 2-3x/wk. Never towel on face.
+- Divine Quest: daily drawing practice (the one thing that makes him zone out) + Latin study. Track cumulative hours, NOT streaks — no guilt mechanics.
+- Wellbeing: he loops on "better than everyone" and plan-collects instead of executing. When he does this, redirect to action. Incomparable > better-than. One plan, executed today, beats five perfect plans.
+- Style: Clean Masculine Minimalist Streetwear + Brutalist Prep. Ralph Lauren, baggy denim, no loud logos.
 - SAT target 1500-1550. Completed AP Physics 1, AP CS A, AP EnvSci, dual-credit Econ + Gov.
 - UT Austin is the target (Informatics/iSchool). Purdue, CMU as backups.
 - Car shortlist: Acura TLX A-Spec, Lexus ES 250, Audi A3 Quattro.
@@ -289,6 +295,7 @@ _MANI_WRITE_KW = [
     'exercise','pullup','pull-up','water','supplement','supp','protein',
     'calorie','cal','task','lore','trade','gratitude','complaint','weight',
     'done','check off','toggle','new task','log weight','streak',
+    'draw','drew','sketch','latin','studied','practice',
 ]
 
 _MANI_READ_KW = [
@@ -299,6 +306,7 @@ _MANI_READ_KW = [
 _MANI_OS_ARRAY_FIELDS = [
     'weightHistory','workoutSessions','pullupLog','gratitudeLog',
     'loreLog','fragranceLog','netWorthHistory','trades','tasks',
+    'drawingLog','latinLog',
 ]
 
 def _trim_state(state):
@@ -319,6 +327,7 @@ gratitudeLog([{id:uuid,text,ts:ms}]) complaintCount(num) complaintDate(str)
 loreLog([{id:uuid,title,body,date:ISO}])
 fragranceLog([{id:uuid,name,occasion,date}]) groomingChecks({YYYY-MM-DD:{hair,face,nails,body}})
 netWorthHistory([{date,value,note}]) trades([{id:uuid,ticker,side,entry,exit,pnl,notes,date}])
+drawingLog([{id:uuid,date,minutes,note}]) latinLog([{id:uuid,date,minutes,note}])
 config:{proteinTarget,calorieTarget} arc:{name,startDate,endDate,metric,startValue,targetValue,unit}"""
 
 def try_mani_os_action(msg):
