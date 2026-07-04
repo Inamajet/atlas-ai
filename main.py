@@ -283,39 +283,125 @@ def mani_os_complete_task(search):
     ok, err2 = mani_os_put(state)
     return f"Task **'{matched['title']}'** marked done on Mani OS." if ok else f"Read OK, write failed: {err2}"
 
-_MANI_WRITE_RE = [
-    # SET calories (change/set/update/correct — replaces today's count)
-    (re.compile(r'(?:change|set|update|fix|correct|make)\s+(?:my\s+)?(?:cal(?:ories?)?|kcal)\s+(?:to|as|=)\s+(\d+(?:\.\d+)?)', re.I), 'cal_set'),
-    (re.compile(r'(?:change|set|update|fix|correct)\s+(?:it\s+)?to\s+(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)', re.I), 'cal_set'),
-    (re.compile(r'(?:my\s+)?(?:total\s+)?cal(?:ories?)?\s+(?:is|are|should\s+be|=)\s+(\d+(?:\.\d+)?)', re.I), 'cal_set'),
-    # ADD calories
-    (re.compile(r'(?:log|add|ate|eaten|had|consumed|track(?:ed)?)\s+(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)', re.I), 'cal'),
-    (re.compile(r'(\d+(?:\.\d+)?)\s*(?:cal(?:ories?)?|kcal)\s+(?:log(?:ged)?|add(?:ed)?)', re.I), 'cal'),
-    # SET protein
-    (re.compile(r'(?:change|set|update|fix)\s+(?:my\s+)?protein\s+(?:to|as|=)\s+(\d+(?:\.\d+)?)', re.I), 'protein_set'),
-    # ADD protein
-    (re.compile(r'(?:log|add|track|ate|consumed)\s+(\d+(?:\.\d+)?)\s*g?(?:rams?)?\s*(?:of\s+)?protein', re.I), 'protein'),
-    # Tasks
-    (re.compile(r'(?:add|create|new)\s+task[:\s]+(.+?)(?:\s+(?:to|on)\s+mani.*)?$', re.I), 'task'),
-    (re.compile(r'(?:complete|finish|done with|mark(?:\s+as)?\s+done)\s+task[:\s]+(.+)', re.I), 'task_done'),
-    # Weight
-    (re.compile(r'(?:log|add|track)\s+(?:my\s+)?weight\s+(?:(?:as|is|of)\s+)?(\d+(?:\.\d+)?)', re.I), 'weight'),
-    (re.compile(r'(?:my\s+)?weight(?:\s+is(?:\s+today)?|\s+today\s+is)?\s+(\d+(?:\.\d+)?)(?:\s+lbs?)?', re.I), 'weight'),
+_MANI_WRITE_KW = [
+    'log','add','track','set','change','update','create','complete','finish',
+    'delete','remove','mark','record','ate','eaten','had','weigh','workout',
+    'exercise','pullup','pull-up','water','supplement','supp','protein',
+    'calorie','cal','task','lore','trade','gratitude','complaint','weight',
+    'done','check off','toggle','new task','log weight','streak',
 ]
 
+_MANI_READ_KW = [
+    'what','how many','show','check','my calories','my protein','my tasks',
+    'my weight','my streak','what did i','how much','status','summary',
+]
+
+_MANI_OS_ARRAY_FIELDS = [
+    'weightHistory','workoutSessions','pullupLog','gratitudeLog',
+    'loreLog','fragranceLog','netWorthHistory','trades','tasks',
+]
+
+def _trim_state(state):
+    s = dict(state)
+    for k in _MANI_OS_ARRAY_FIELDS:
+        if isinstance(s.get(k), list):
+            s[k] = s[k][-5:]
+    return s
+
+_MANI_SCHEMA = """Fields:
+calories(num) caloriesDate(YYYY-MM-DD) protein(num) proteinDate(YYYY-MM-DD)
+weight(num lbs) weightHistory([{date,weight}]) streak(num)
+tasks([{id:uuid,title,why,createdAt:ms,done:bool}])
+workoutSessions([{id,date,splitName,exercises:[{name,sets:[{weight,reps}]}]}])
+pullupLog([{date,reps}])
+dailyChecks({YYYY-MM-DD:{sleep:{mouthTape,coldRoom,redLights,foodCutoff,magGlyc},supps:{creatine,d3,omega3,magGlyc,whey},water:num,skinAm:bool,skinPm:bool}})
+gratitudeLog([{id:uuid,text,ts:ms}]) complaintCount(num) complaintDate(str)
+loreLog([{id:uuid,title,body,date:ISO}])
+fragranceLog([{id:uuid,name,occasion,date}]) groomingChecks({YYYY-MM-DD:{hair,face,nails,body}})
+netWorthHistory([{date,value,note}]) trades([{id:uuid,ticker,side,entry,exit,pnl,notes,date}])
+config:{proteinTarget,calorieTarget} arc:{name,startDate,endDate,metric,startValue,targetValue,unit}"""
+
 def try_mani_os_action(msg):
-    for pattern, action in _MANI_WRITE_RE:
-        m = pattern.search(msg)
-        if m:
-            val = m.group(1).strip()
-            if action == 'cal':         return mani_os_log_calories(float(val), mode="add")
-            if action == 'cal_set':     return mani_os_log_calories(float(val), mode="set")
-            if action == 'protein':     return mani_os_log_protein(float(val), mode="add")
-            if action == 'protein_set': return mani_os_log_protein(float(val), mode="set")
-            if action == 'task':        return mani_os_add_task(val)
-            if action == 'weight':      return mani_os_log_weight(float(val))
-            if action == 'task_done':   return mani_os_complete_task(val)
-    return None
+    msg_lo = msg.lower()
+    if not any(k in msg_lo for k in _MANI_WRITE_KW):
+        return None
+
+    state, err = mani_os_get()
+    if err:
+        return f"Could not reach Mani OS: {err}"
+
+    today = datetime.now().strftime('%Y-%m-%d')
+    now_ms = int(time.time() * 1000)
+    trimmed = _trim_state(state)
+
+    prompt = f"""You are a JSON mutation engine for Mani OS (personal dashboard).
+
+Current state (arrays trimmed to last 5):
+{json.dumps(trimmed, indent=2)[:4000]}
+
+Today: {today} | Now ms: {now_ms}
+Schema: {_MANI_SCHEMA}
+
+User: "{msg}"
+
+Return ONLY a JSON patch — the fields that need to change.
+- Scalars: just the new value
+- Arrays: COMPLETE updated array (existing items + additions/removals)
+- New IDs: UUID v4 strings
+- ms timestamps: {now_ms}
+- Date resets: update caloriesDate/proteinDate to {today} when changing those fields
+- Pure read requests (no mutation): return {{}}
+
+Reply with ONLY raw JSON, no markdown, no explanation."""
+
+    try:
+        r = client.chat.completions.create(
+            model=FAST_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, temperature=0
+        )
+        raw = r.choices[0].message.content.strip().lstrip('`').rstrip('`')
+        if raw.startswith('json\n'): raw = raw[5:]
+        patch = json.loads(raw)
+        if not patch:
+            return None
+
+        # Merge: if LLM returned a smaller array than current (missed existing items), merge
+        for field in _MANI_OS_ARRAY_FIELDS:
+            if field in patch and isinstance(patch[field], list):
+                full = state.get(field, [])
+                if len(patch[field]) < len(full):
+                    existing_ids = {x.get('id') or x.get('date') for x in patch[field]}
+                    kept = [x for x in full if (x.get('id') or x.get('date')) not in existing_ids]
+                    # prepend-style fields
+                    if field in ('tasks', 'gratitudeLog', 'loreLog', 'workoutSessions'):
+                        patch[field] = patch[field] + kept
+                    else:
+                        patch[field] = kept + patch[field]
+
+        state.update(patch)
+        ok, err2 = mani_os_put(state)
+        if not ok:
+            return f"Read OK, write failed: {err2}"
+
+        return ("__ok__", list(patch.keys()), patch)
+    except Exception:
+        return None
+
+def mani_os_read_answer(msg, history, facts):
+    """Answer questions about Mani OS using live state data."""
+    state, err = mani_os_get()
+    if err:
+        return f"Couldn't read Mani OS: {err}"
+    today = datetime.now().strftime('%Y-%m-%d')
+    state_summary = json.dumps(_trim_state(state), indent=2)[:5000]
+    context = f"Mani OS live state (today: {today}):\n{state_summary}"
+    msgs = [{"role": "system", "content": JARVIS_PROMPT}]
+    if facts: msgs.append({"role": "system", "content": f"Memory:\n{facts}"})
+    msgs.append({"role": "system", "content": context})
+    for h in history[-6:]: msgs.append({"role": h["role"], "content": h["content"]})
+    msgs.append({"role": "user", "content": msg})
+    return groq_chat(FAST_MODEL, msgs, max_tokens=800)
 
 def browse_url(url):
     try:
@@ -562,15 +648,31 @@ def chat():
     # ── Mani OS write actions ─────────────────────────────────────────────
     action_result = try_mani_os_action(msg)
     if action_result:
-        confirm_msgs = [
-            {"role": "system", "content": JARVIS_PROMPT},
-            {"role": "user", "content": f"Action just executed: {action_result}\nUser message was: {msg}\n\nConfirm in 1-2 sentences max."}
-        ]
-        reply = groq_chat(FAST_MODEL, confirm_msgs, max_tokens=120)
+        if isinstance(action_result, tuple) and action_result[0] == "__ok__":
+            _, changed_fields, patch = action_result
+            confirm_msgs = [
+                {"role": "system", "content": JARVIS_PROMPT},
+                {"role": "user", "content": f"You just updated Mani OS fields: {changed_fields}\nPatch: {json.dumps(patch)[:400]}\nUser said: \"{msg}\"\n\nConfirm in 1-2 sentences. Be specific about what changed."}
+            ]
+            reply = groq_chat(FAST_MODEL, confirm_msgs, max_tokens=120)
+        else:
+            reply = str(action_result)
         history.append({"role": "user", "content": msg})
         history.append({"role": "assistant", "content": reply})
         save_memory(facts, history)
         return jsonify({"reply": reply, "intent": "action"})
+
+    # ── Mani OS read queries ───────────────────────────────────────────────
+    msg_lo = msg.lower()
+    _mani_data_kw = ['calories','protein','weight','task','workout','streak',
+                     'water','pull','trade','lore','net worth','check','supp']
+    if (any(k in msg_lo for k in MANI_OS_TRIGGERS) or
+            (any(k in msg_lo for k in _MANI_READ_KW) and any(k in msg_lo for k in _mani_data_kw))):
+        reply = mani_os_read_answer(msg, history, facts)
+        history.append({"role": "user", "content": msg})
+        history.append({"role": "assistant", "content": reply})
+        save_memory(facts, history)
+        return jsonify({"reply": reply, "intent": "mani_read"})
     # ─────────────────────────────────────────────────────────────────────
 
     history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
