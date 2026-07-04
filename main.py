@@ -432,14 +432,26 @@ def mani_os_read_answer(msg, history, facts):
     if err:
         return f"Couldn't read Mani OS: {err}"
     today = datetime.now().strftime('%Y-%m-%d')
-    state_summary = json.dumps(_trim_state(state), indent=2)[:5000]
-    context = f"Mani OS live state (today: {today}):\n{state_summary}"
+    # Pre-compute today's values so the model never confuses stale dates.
+    cals_today = state.get('calories', 0) if state.get('caloriesDate') == today else 0
+    prot_today = state.get('protein', 0) if state.get('proteinDate') == today else 0
+    day = (state.get('dailyChecks') or {}).get(today, {})
+    supps = day.get('supps', {}); sleep = day.get('sleep', {})
+    todays = (f"TODAY IS {today}. Values reset daily — use these for 'today':\n"
+              f"- calories today: {cals_today} (target {(state.get('config') or {}).get('calorieTarget', 2200)})\n"
+              f"- protein today: {prot_today}g (target {(state.get('config') or {}).get('proteinTarget', 163)})\n"
+              f"- water today: {day.get('water', 0)}/8\n"
+              f"- supplements taken today: {sum(1 for v in supps.values() if v)}/5\n"
+              f"- open tasks: {sum(1 for t in (state.get('tasks') or []) if not t.get('done'))}\n"
+              f"Anything with an older date is NOT today.")
+    state_summary = json.dumps(_trim_state(state), indent=2)[:4000]
+    context = f"{todays}\n\nFull Mani OS state:\n{state_summary}"
     msgs = [{"role": "system", "content": JARVIS_PROMPT}]
-    if facts: msgs.append({"role": "system", "content": f"Memory:\n{facts}"})
+    if facts: msgs.append({"role": "system", "content": f"Memory:\n{facts[:1200]}"})
     msgs.append({"role": "system", "content": context})
-    for h in history[-6:]: msgs.append({"role": h["role"], "content": h["content"]})
+    for h in history[-4:]: msgs.append({"role": h["role"], "content": (h.get("content") or "")[:600]})
     msgs.append({"role": "user", "content": msg})
-    return groq_chat(FAST_MODEL, msgs, max_tokens=800)
+    return groq_chat(FAST_MODEL, msgs, max_tokens=500)
 
 # ── Agentic tool loop — Borfoli's "hands" ──────────────────────────────────────
 # Real capabilities: browse the web, search, read live Mani OS state, control the
@@ -1022,6 +1034,35 @@ def pc_result():
         c["result"] = d.get("result", "")
     return jsonify({"ok": True})
 
+# ── Zero-token PC fast paths ────────────────────────────────────────────────────
+# Common commands run WITHOUT any Groq LLM call — instant, and they keep working
+# even when the daily model limit is hit. Screen vision uses OpenRouter (separate
+# quota), so "what's on my screen" survives a Groq rate-limit too.
+_PC_SCREEN_RE = re.compile(
+    r"(what'?s?\s+on\s+my\s+screen|what\s+am\s+i\s+(?:looking at|doing|seeing)|"
+    r"look\s+at\s+my\s+screen|see\s+my\s+screen|check\s+my\s+screen|read\s+my\s+screen|"
+    r"take\s+a\s+screen\s?shot|screenshot\s+my\s+screen|^\s*screenshot\s*$)", re.I)
+_PC_OPEN_RE = re.compile(
+    r"^\s*(?:hey\s+|ok\s+|now\s+|please\s+|can\s+you\s+|could\s+you\s+|go\s+)*"
+    r"(?:open|launch|start|run|pull\s+up|bring\s+up|go\s+to)\s+(?:the\s+|my\s+|up\s+)?(.+?)\s*[?.!]*\s*$", re.I)
+_PC_TYPE_RE = re.compile(r"^\s*type\s+(?:out\s+)?(.+?)\s*$", re.I)
+
+def try_pc_action(msg):
+    """Handle simple PC commands with no LLM call. Returns a result string or None."""
+    if _PC_SCREEN_RE.search(msg):
+        return _tool_see_screen("")                       # vision only, no Groq tokens
+    m = _PC_OPEN_RE.match(msg)
+    if m:
+        target = m.group(1).strip().strip('"\'')
+        low = target.lower()
+        # Only fast-path a simple single target; hand multi-step to the agent.
+        if target and ' and ' not in low and ' then ' not in low and len(target.split()) <= 4:
+            return run_on_pc("open", {"target": target})
+    m = _PC_TYPE_RE.match(msg)
+    if m and len(m.group(1)) <= 300:
+        return run_on_pc("type_text", {"text": m.group(1).strip().strip('"\'')})
+    return None
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -1045,6 +1086,14 @@ def chat():
         history.append({"role": "assistant", "content": reply})
         save_memory(facts, history)
         return jsonify({"reply": reply, "intent": "action"})
+
+    # ── Zero-token PC fast paths (open/screenshot/type) ────────────────────
+    pc_result_str = try_pc_action(msg)
+    if pc_result_str is not None:
+        history.append({"role": "user", "content": msg})
+        history.append({"role": "assistant", "content": pc_result_str})
+        save_memory(facts, history)
+        return jsonify({"reply": pc_result_str, "intent": "pc_action"})
 
     # ── Mani OS read queries ───────────────────────────────────────────────
     msg_lo = msg.lower()
