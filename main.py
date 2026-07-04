@@ -455,6 +455,36 @@ AGENT_TOOLS = [
         }}
     }},
     {"type": "function", "function": {
+        "name": "pc_click",
+        "description": "Click the mouse at screen pixel coordinates on Mani's PC. Call see_screen FIRST to find where to click (it reports the screen resolution). Omit x/y to click at the current cursor position.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "integer", "description": "X pixel (0 = left edge)"},
+            "y": {"type": "integer", "description": "Y pixel (0 = top edge)"},
+            "double": {"type": "boolean", "description": "Double-click instead of single"}
+        }}
+    }},
+    {"type": "function", "function": {
+        "name": "pc_type",
+        "description": "Type text on Mani's PC wherever the cursor/focus currently is. Click into a field first if needed.",
+        "parameters": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "The text to type"}
+        }, "required": ["text"]}
+    }},
+    {"type": "function", "function": {
+        "name": "pc_key",
+        "description": "Press a single key or a keyboard shortcut on Mani's PC. For one key use 'enter','tab','esc','down' etc. For a shortcut pass a combo like 'ctrl+c', 'alt+tab', 'ctrl+shift+t'.",
+        "parameters": {"type": "object", "properties": {
+            "key": {"type": "string", "description": "A key ('enter') or shortcut ('ctrl+c')"}
+        }, "required": ["key"]}
+    }},
+    {"type": "function", "function": {
+        "name": "pc_scroll",
+        "description": "Scroll the screen on Mani's PC. Positive = up, negative = down.",
+        "parameters": {"type": "object", "properties": {
+            "amount": {"type": "integer", "description": "Scroll amount, e.g. 500 up or -500 down"}
+        }, "required": ["amount"]}
+    }},
+    {"type": "function", "function": {
         "name": "pc_open",
         "description": "Open an app, file, folder, or website on Mani's PC (e.g. 'chrome', 'notepad', 'C:/Users/Manit/Downloads', 'https://gmail.com'). Runs immediately.",
         "parameters": {"type": "object", "properties": {
@@ -528,19 +558,24 @@ Return ONLY a JSON patch (changed fields only). Arrays: complete updated array. 
         return f"Could not apply update: {e}"
 
 def _tool_see_screen(question):
-    b64 = run_on_pc("screenshot", {}, timeout=35)
-    if not b64 or len(b64) < 300:
-        return b64 or "Couldn't capture the screen."
+    raw = run_on_pc("screenshot", {}, timeout=35)
+    if not raw or len(raw) < 300:
+        return raw or "Couldn't capture the screen."
+    dims, b64 = ("", raw)
+    if "|" in raw[:20]:
+        dims, b64 = raw.split("|", 1)
+    coord_note = (f"The real screen is {dims} pixels. If asked to locate something for a click, "
+                  f"give pixel coordinates in that full range (top-left is 0,0). ") if dims else ""
     try:
         r = or_client.chat.completions.create(
             model="meta-llama/llama-3.2-11b-vision-instruct:free",
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": question or "What's on the screen right now? Describe what the user is doing and anything notable."}
+                {"type": "text", "text": coord_note + (question or "What's on the screen right now? Describe what the user is doing and anything notable.")}
             ]}],
             max_tokens=1000,
         )
-        return r.choices[0].message.content.strip()
+        return (f"[screen {dims}] " if dims else "") + r.choices[0].message.content.strip()
     except Exception as e:
         return f"Captured the screen but couldn't interpret it: {e}"
 
@@ -560,6 +595,12 @@ _TOOL_FNS = {
     "update_mani_os":lambda a: _tool_update_mani_os(a.get("instruction", "")),
     "check_mani_pc": lambda a: _tool_check_mani_pc(),
     "see_screen":    lambda a: _tool_see_screen(a.get("question", "")),
+    "pc_click":      lambda a: run_on_pc("double_click" if a.get("double") else "click",
+                                         {"x": a.get("x"), "y": a.get("y")}),
+    "pc_type":       lambda a: run_on_pc("type_text", {"text": a.get("text", "")}),
+    "pc_key":        lambda a: run_on_pc("hotkey", {"keys": a.get("key", "")}) if "+" in a.get("key", "")
+                                else run_on_pc("press_key", {"key": a.get("key", "")}),
+    "pc_scroll":     lambda a: run_on_pc("scroll", {"amount": a.get("amount", 0)}),
     "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
     "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
@@ -572,12 +613,16 @@ def agent_answer(msg, history, facts):
     os_ctx = get_os_context()
     sys_blocks = [JARVIS_PROMPT,
         "You have real tools — USE them, don't guess: search the web, open/read pages, "
-        "read and control Mani's dashboard, see his screen (see_screen), and control his PC "
-        "(open apps/files/sites, read files, run commands, read his email, send email as him). "
-        "Chain tools as needed, then "
-        "give a short, direct answer. Running commands and sending email require his approval on "
-        "his machine — go ahead and call the tool, he'll approve or decline. Always confirm "
-        "exactly what you did (what changed, what you sent, to whom)."]
+        "read and control Mani's dashboard, see his screen, and fully control his PC — mouse, "
+        "keyboard, apps, files, email. "
+        "To operate the computer (click a button, fill a form, use an app): call see_screen "
+        "FIRST to look, it reports the screen resolution; then pc_click at the pixel coordinates "
+        "you saw, pc_type to type, pc_key for keys/shortcuts (enter, ctrl+c, alt+tab), pc_scroll "
+        "to scroll. Look again with see_screen after acting to verify it worked, and correct if "
+        "the click missed. "
+        "Running shell commands and sending email require his approval on his machine — just call "
+        "the tool, he'll approve or decline. Chain tools as needed, then give a short, direct "
+        "answer. Always confirm exactly what you did."]
     if facts: sys_blocks.append(f"Memory:\n{facts}")
     if os_ctx: sys_blocks.append(os_ctx)
 
@@ -1067,6 +1112,32 @@ def vision():
     except Exception as e:
         return jsonify({"reply": f"Vision error: {e}"})
 
+# ── Realistic TTS (ElevenLabs) ─────────────────────────────────────────────────
+# Set ELEVENLABS_KEY (and optionally ELEVENLABS_VOICE) as env vars to enable a
+# realistic voice. Without a key, the frontend falls back to the browser voice.
+ELEVENLABS_KEY   = os.environ.get("ELEVENLABS_KEY", "")
+ELEVENLABS_VOICE = os.environ.get("ELEVENLABS_VOICE", "pNInz6obpgDQGcFmaJgB")  # "Adam"
+
+@app.route("/tts", methods=["POST"])
+def tts():
+    if not ELEVENLABS_KEY:
+        return jsonify({"enabled": False})
+    text = (request.json or {}).get("text", "")[:1500]
+    if not text:
+        return jsonify({"enabled": True, "error": "no text"})
+    try:
+        r = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE}",
+            headers={"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"},
+            json={"text": text, "model_id": "eleven_turbo_v2_5",
+                  "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3}},
+            timeout=30)
+        if r.status_code == 200:
+            return Response(r.content, mimetype="audio/mpeg")
+        return jsonify({"enabled": True, "error": f"HTTP {r.status_code}"})
+    except Exception as e:
+        return jsonify({"enabled": True, "error": str(e)})
+
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
 HTML = """<!DOCTYPE html>
@@ -1287,7 +1358,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
         <div id="iw">
           <textarea id="inp" placeholder="Interface with BORFOLI..." rows="1"></textarea>
           <button class="tbtn" id="mic-btn" onclick="toggleVoice()" title="Voice input">🎤</button>
-          <button class="tbtn" id="wake-btn" onclick="toggleWake()" title="Wake word: Borfoli">👂</button>
+          <button class="tbtn" id="wake-btn" onclick="toggleWake()" title="Wake word: say &quot;Bor&quot; or &quot;Borfoli&quot;">👂</button>
           <button class="tbtn" id="tts-btn" onclick="toggleTTS()" title="Voice output (speak replies)">🔊</button>
           <button class="tbtn" onclick="document.getElementById('img-in').click()" title="Attach image">📎</button>
           <input type="file" id="img-in" accept="image/*" style="display:none" onchange="handleImg(event)">
@@ -1498,49 +1569,80 @@ function toggleVoice(){
   recog.start();
 }
 
-// ── TTS ───────────────────────────────────────────────────────
-let ttsEnabled=false,ttsVoice=null;
+// ── TTS (realistic: ElevenLabs server voice, fallback to best browser voice) ──
+let ttsEnabled=false,ttsVoice=null,serverTTS=null,ttsAudio=null;
 function initVoices(){
   const vs=speechSynthesis.getVoices();
-  ttsVoice=vs.find(v=>v.lang==='en-US'&&(v.name.includes('Google')||v.name.includes('Premium')||v.name.includes('Enhanced')))||
-            vs.find(v=>v.lang.startsWith('en')&&v.name.includes('Microsoft'))||
-            vs.find(v=>v.lang==='en-US')||null;
+  const pick=n=>vs.find(v=>v.name.toLowerCase().includes(n));
+  ttsVoice=pick('natural')||pick('neural')||pick('online')||pick('aria')||pick('jenny')||pick('guy')||pick('ryan')||
+           vs.find(v=>v.lang==='en-US'&&v.name.includes('Google'))||
+           vs.find(v=>v.lang==='en-US')||vs[0]||null;
 }
 if(window.speechSynthesis){speechSynthesis.onvoiceschanged=initVoices;initVoices();}
-function speak(text){
-  if(!ttsEnabled||!window.speechSynthesis)return;
-  const plain=text.replace(/#{1,6}\s/g,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/\*(.*?)\*/g,'$1')
+function stripMd(text){
+  return text.replace(/#{1,6}\s/g,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/\*(.*?)\*/g,'$1')
     .replace(/`[^`]+`/g,'').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/https?:\/\/\S+/g,'')
-    .replace(/[>|]/g,'').trim().slice(0,900);
+    .replace(/[>|#*_~]/g,'').trim().slice(0,1200);
+}
+async function speak(text){
+  if(!ttsEnabled)return;
+  const plain=stripMd(text);
+  if(!plain)return;
+  // Try realistic server voice first (ElevenLabs, if a key is configured on the server)
+  if(serverTTS!==false){
+    try{
+      const r=await fetch('/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:plain})});
+      const ct=r.headers.get('content-type')||'';
+      if(r.ok&&ct.includes('audio')){
+        serverTTS=true;
+        if(ttsAudio){ttsAudio.pause();}
+        ttsAudio=new Audio(URL.createObjectURL(await r.blob()));ttsAudio.play();
+        return;
+      }
+      serverTTS=false; // no key / not enabled — don't retry the server
+    }catch(e){serverTTS=false;}
+  }
+  // Fallback: best available browser voice
+  if(!window.speechSynthesis)return;
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(plain);
-  u.rate=1.05;u.pitch=1.0;u.volume=1.0;
+  u.rate=0.97;u.pitch=1.0;u.volume=1.0;
   if(ttsVoice)u.voice=ttsVoice;
   speechSynthesis.speak(u);
 }
 function toggleTTS(){
   ttsEnabled=!ttsEnabled;
   document.getElementById('tts-btn').classList.toggle('active',ttsEnabled);
-  if(!ttsEnabled)speechSynthesis.cancel();
+  if(!ttsEnabled){speechSynthesis.cancel();if(ttsAudio)ttsAudio.pause();}
 }
 
-// ── Wake word ─────────────────────────────────────────────────
-const WAKE_VARS=['borfoli','bor foli','bor-foli','borfolli','bore foli','bore folly','bor foley','boar foli','for foli','borfoly','bor folly'];
-let wakeRecog=null,wakeOn=false;
+// ── Wake word: "bor" / "borfoli" + close mishearings, two-phase ──
+// Matches the wake word as a whole word, across STT alternatives. Say "Bor" or
+// "Borfoli" then your command in one breath — or just the wake word, then speak.
+const WAKE_RE=/\b(bor|borf\w*|bore|bored|boron|board|buffalo|portfolio|for ?fol(i|y|io)|bore ?fol\w*|boar ?fol\w*|before ?e?)\b/i;
+let wakeRecog=null,wakeOn=false,wakeArmed=false;
+function beep(f){try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f||880;g.gain.value=0.08;o.start();o.stop(a.currentTime+0.1);}catch(e){}}
 function toggleWake(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Voice not supported.');return;}
-  if(wakeOn){wakeOn=false;wakeRecog&&wakeRecog.stop();document.getElementById('wake-btn').classList.remove('active');return;}
-  wakeRecog=new SR();wakeRecog.continuous=true;wakeRecog.interimResults=false;wakeRecog.lang='en-US';
+  if(wakeOn){wakeOn=false;wakeArmed=false;wakeRecog&&wakeRecog.stop();document.getElementById('wake-btn').classList.remove('active');return;}
+  wakeRecog=new SR();wakeRecog.continuous=true;wakeRecog.interimResults=false;wakeRecog.lang='en-US';wakeRecog.maxAlternatives=4;
   wakeOn=true;document.getElementById('wake-btn').classList.add('active');
   wakeRecog.onresult=e=>{
-    const raw=e.results[e.results.length-1][0].transcript.trim(),low=raw.toLowerCase();
-    let found=null;
-    for(const v of WAKE_VARS){const idx=low.indexOf(v);if(idx>=0){found={idx,len:v.length};break;}}
-    if(found){
-      let cmd=raw.slice(found.idx+found.len).trim();
-      while(cmd.length&&',: '.includes(cmd[0]))cmd=cmd.slice(1).trim();
+    const res=e.results[e.results.length-1];
+    if(!res.isFinal)return;
+    let alts=[];for(let i=0;i<res.length;i++)alts.push((res[i].transcript||'').trim());
+    // If armed (wake word heard a moment ago), this whole utterance is the command.
+    if(wakeArmed){wakeArmed=false;const cmd=alts[0];if(cmd){beep(1200);inp.value=cmd;send();}return;}
+    // Otherwise hunt for the wake word in any alternative.
+    let hit=null;
+    for(const a of alts){const m=a.toLowerCase().match(WAKE_RE);if(m){hit={a,idx:m.index,len:m[0].length};break;}}
+    if(hit){
+      beep(880);
+      let cmd=hit.a.slice(hit.idx+hit.len).trim();
+      while(cmd.length&&',:.- '.includes(cmd[0]))cmd=cmd.slice(1).trim();
       if(cmd){inp.value=cmd;send();}
+      else{wakeArmed=true;setTimeout(()=>{wakeArmed=false;},7000);} // listen for the command next
     }
   };
   wakeRecog.onend=()=>{if(wakeOn){try{wakeRecog.start();}catch(e){}}};
