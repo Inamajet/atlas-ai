@@ -447,6 +447,43 @@ AGENT_TOOLS = [
         "description": "Get live telemetry from Mani's Windows PC — CPU, RAM, active window, top processes. Only works when his local agent is running.",
         "parameters": {"type": "object", "properties": {}}
     }},
+    {"type": "function", "function": {
+        "name": "pc_open",
+        "description": "Open an app, file, folder, or website on Mani's PC (e.g. 'chrome', 'notepad', 'C:/Users/Manit/Downloads', 'https://gmail.com'). Runs immediately.",
+        "parameters": {"type": "object", "properties": {
+            "target": {"type": "string", "description": "App name, file/folder path, or URL to open"}
+        }, "required": ["target"]}
+    }},
+    {"type": "function", "function": {
+        "name": "pc_read_file",
+        "description": "Read a text file from Mani's PC. Runs immediately.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Absolute path to the file"}
+        }, "required": ["path"]}
+    }},
+    {"type": "function", "function": {
+        "name": "pc_run_command",
+        "description": "Run a shell command on Mani's Windows PC. He must APPROVE it on his machine before it runs. Use for tasks that need the terminal.",
+        "parameters": {"type": "object", "properties": {
+            "command": {"type": "string", "description": "The command to run"}
+        }, "required": ["command"]}
+    }},
+    {"type": "function", "function": {
+        "name": "read_email",
+        "description": "Read Mani's most recent emails (subject, from, snippet). Runs immediately if his email is connected on his PC.",
+        "parameters": {"type": "object", "properties": {
+            "count": {"type": "integer", "description": "How many recent emails to fetch (default 5)"}
+        }}
+    }},
+    {"type": "function", "function": {
+        "name": "send_email",
+        "description": "Send an email as Mani. He must APPROVE the draft on his machine before it sends. Always confirm the recipient and content back to him after.",
+        "parameters": {"type": "object", "properties": {
+            "to": {"type": "string", "description": "Recipient email address"},
+            "subject": {"type": "string", "description": "Email subject"},
+            "body": {"type": "string", "description": "Email body"}
+        }, "required": ["to", "subject", "body"]}
+    }},
 ]
 
 def _tool_web_search(query):
@@ -498,16 +535,23 @@ _TOOL_FNS = {
     "read_mani_os":  lambda a: _tool_read_mani_os(),
     "update_mani_os":lambda a: _tool_update_mani_os(a.get("instruction", "")),
     "check_mani_pc": lambda a: _tool_check_mani_pc(),
+    "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
+    "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
+    "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
+    "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
+    "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
 }
 
 def agent_answer(msg, history, facts):
     """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
     os_ctx = get_os_context()
     sys_blocks = [JARVIS_PROMPT,
-        "You have real tools: search the web, open pages, read and control Mani's dashboard, "
-        "and check his PC. USE them — don't guess when you can look it up, and actually make "
-        "changes when he asks. Chain tools as needed, then give a short, direct answer. "
-        "When you change his dashboard, confirm exactly what you changed."]
+        "You have real tools — USE them, don't guess: search the web, open/read pages, "
+        "read and control Mani's dashboard, and control his PC (open apps/files/sites, read "
+        "files, run commands, read his email, send email as him). Chain tools as needed, then "
+        "give a short, direct answer. Running commands and sending email require his approval on "
+        "his machine — go ahead and call the tool, he'll approve or decline. Always confirm "
+        "exactly what you did (what changed, what you sent, to whom)."]
     if facts: sys_blocks.append(f"Memory:\n{facts}")
     if os_ctx: sys_blocks.append(os_ctx)
 
@@ -780,6 +824,55 @@ def os_status_route():
     return jsonify(result)
 
 # ── Chat Routes ───────────────────────────────────────────────────────────────
+
+# ── PC control bridge ──────────────────────────────────────────────────────────
+# The local agent (borfoli_agent.py) polls /pc/pending, executes actions on Mani's
+# machine, and posts results to /pc/result. The server never holds his credentials.
+
+pc_commands = {}   # id -> {id, action, args, status, result, ts}
+pc_queue = []      # ids awaiting pickup
+
+def run_on_pc(action, args, timeout=50):
+    """Queue an action for the local agent and wait for its result."""
+    cid = uuid.uuid4().hex[:8]
+    pc_commands[cid] = {"id": cid, "action": action, "args": args,
+                        "status": "queued", "result": None, "ts": time.time()}
+    pc_queue.append(cid)
+    start = time.time()
+    while time.time() - start < timeout:
+        c = pc_commands.get(cid)
+        if c and c["status"] == "done":
+            return c["result"]
+        if c and c["status"] == "denied":
+            return "You declined that action on your PC."
+        time.sleep(1.2)
+    pc_commands[cid]["status"] = "expired"
+    return "Your PC agent didn't respond — is borfoli_agent.py running?"
+
+def pc_agent_online():
+    if not os_telemetry:
+        return False
+    return (time.time() - os_telemetry.get("received_at", 0)) < 120
+
+@app.route("/pc/pending")
+def pc_pending():
+    out = []
+    for cid in list(pc_queue):
+        c = pc_commands.get(cid)
+        if c and c["status"] == "queued":
+            c["status"] = "sent"
+            out.append({"id": c["id"], "action": c["action"], "args": c["args"]})
+    return jsonify(out)
+
+@app.route("/pc/result", methods=["POST"])
+def pc_result():
+    d = request.json or {}
+    cid = d.get("id")
+    c = pc_commands.get(cid)
+    if c:
+        c["status"] = d.get("status", "done")
+        c["result"] = d.get("result", "")
+    return jsonify({"ok": True})
 
 @app.route("/chat", methods=["POST"])
 def chat():
