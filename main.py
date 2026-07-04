@@ -75,7 +75,8 @@ YOUR PERSONALITY:
 - Sound like a brilliant human advisor, not an AI assistant generating templates.
 - When he's casual, you're casual. When he needs deep analysis, go deep.
 - You already know everything about him. NEVER ask him to clarify who he is, what his goals are, or what he wants. Use the profile.
-- If he asks "what should I focus on?" answer directly — cybersec paper, SAT, physique, Mani OS, trading. Pick highest leverage.
+- Do what he asks. If he wants to open something, watch something, or take a break — help, don't moralize. Do NOT refuse casual requests or lecture him about his goals/productivity. He is in charge; you are not his hall monitor.
+- Only bring up his goals/priorities if he explicitly asks "what should I focus on" — then answer directly (cybersec paper, SAT, physique, Mani OS).
 - Never use bullet points or headers for simple questions. Match format to content.
 
 CRITICAL: Never ask clarifying questions about his identity, goals, or background. The profile above IS the answer.
@@ -316,6 +317,8 @@ _AGENT_KW = [
 ]
 def _wants_agent(msg_lo):
     return any(k in msg_lo for k in _AGENT_KW)
+
+_agent_until = 0   # timestamp: keep short follow-ups in the agent loop until this
 
 def _agent_followup(msg_lo, history):
     """Keep short follow-ups in the agent loop when the recent turn was agent-y
@@ -635,63 +638,80 @@ _TOOL_FNS = {
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
 }
 
+AGENT_INSTRUCTIONS = (
+    "You have real tools — USE them, don't guess: search the web, open/read pages, "
+    "read and control Mani's dashboard, see his screen, and fully control his PC — mouse, "
+    "keyboard, apps, files, email. "
+    "When he asks you to open, launch, play, show, run, or check something, JUST DO IT with the "
+    "tools. Do NOT lecture him about productivity, refuse casual requests, or steer him back to his "
+    "goals — he decides what he wants. Only discuss his goals if he explicitly asks what to work on. "
+    "To operate the computer: call see_screen FIRST (it reports the screen resolution), then pc_click "
+    "at the pixel coordinates you saw, pc_type to type, pc_key for keys/shortcuts (enter, ctrl+c, "
+    "alt+tab), pc_scroll to scroll. Look again with see_screen to verify and correct a missed click. "
+    "Shell commands and sending email need his approval on his machine — just call the tool, he'll "
+    "approve or decline. Keep answers short. "
+    "CRITICAL HONESTY RULE: NEVER claim you opened, read, saw, sent, or changed anything unless a tool "
+    "call ACTUALLY returned success. Never invent emails, screen contents, or outcomes. If a tool says "
+    "the PC agent is offline / didn't respond, tell him plainly his PC agent (borfoli_agent.py) isn't "
+    "running so you can't reach his machine — don't pretend it worked. Report only what tools returned."
+)
+
+def _tool_completion(msgs, max_tokens=900):
+    """Tool-calling completion with rate-limit fallback to a lighter model.
+    Returns (response, error_kind) — error_kind is None, 'rate', or 'error'."""
+    for m in (FAST_MODEL, "llama-3.1-8b-instant"):
+        try:
+            r = client.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
+                tool_choice="auto", max_tokens=max_tokens, temperature=0.3)
+            return r, None
+        except Exception as e:
+            if _is_rate_limit(e):
+                continue
+            return None, "error"
+    return None, "rate"
+
 def agent_answer(msg, history, facts):
     """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
     os_ctx = get_os_context()
-    sys_blocks = [JARVIS_PROMPT,
-        "You have real tools — USE them, don't guess: search the web, open/read pages, "
-        "read and control Mani's dashboard, see his screen, and fully control his PC — mouse, "
-        "keyboard, apps, files, email. "
-        "To operate the computer (click a button, fill a form, use an app): call see_screen "
-        "FIRST to look, it reports the screen resolution; then pc_click at the pixel coordinates "
-        "you saw, pc_type to type, pc_key for keys/shortcuts (enter, ctrl+c, alt+tab), pc_scroll "
-        "to scroll. Look again with see_screen after acting to verify it worked, and correct if "
-        "the click missed. "
-        "Running shell commands and sending email require his approval on his machine — just call "
-        "the tool, he'll approve or decline. Chain tools as needed, then give a short, direct "
-        "answer. "
-        "CRITICAL HONESTY RULE: NEVER claim you opened, read, saw, sent, or changed anything unless "
-        "a tool call ACTUALLY returned a success result. Do not invent emails, screen contents, or "
-        "outcomes. If a tool returns that the PC agent is offline / didn't respond, tell him plainly "
-        "that his PC agent (borfoli_agent.py) isn't running, so you can't reach his machine — don't "
-        "pretend it worked. Only report what the tools actually returned."]
-    if facts: sys_blocks.append(f"Memory:\n{facts}")
+    sys_blocks = [JARVIS_PROMPT, AGENT_INSTRUCTIONS]
+    if facts: sys_blocks.append(f"Memory:\n{facts[:1500]}")
     if os_ctx: sys_blocks.append(os_ctx)
 
     msgs = [{"role": "system", "content": "\n\n".join(sys_blocks)}]
-    for h in history[-6:]:
-        msgs.append({"role": h["role"], "content": h["content"]})
+    for h in history[-4:]:
+        msgs.append({"role": h["role"], "content": (h.get("content") or "")[:800]})
     msgs.append({"role": "user", "content": msg})
 
+    for _ in range(4):  # up to 4 tool rounds (was 6 — save tokens)
+        r, err = _tool_completion(msgs)
+        if err == "rate":
+            return ("⚠ My daily model limit is maxed out right now, so I can't run tools this second. "
+                    "It resets on a rolling 24h window — try again later, or add a paid API key for "
+                    "unlimited use. I did NOT do anything just now.")
+        if err:
+            return "I hit an error reaching my tools, so nothing was done. Try that again in a moment."
+        choice = r.choices[0].message
+        calls = choice.tool_calls
+        if not calls:
+            return choice.content or "Done."
+        msgs.append({"role": "assistant", "content": choice.content or "",
+                     "tool_calls": [{"id": c.id, "type": "function",
+                        "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                        for c in calls]})
+        for c in calls:
+            try:
+                args = json.loads(c.function.arguments or "{}")
+            except Exception:
+                args = {}
+            fn = _TOOL_FNS.get(c.function.name)
+            result = fn(args) if fn else f"Unknown tool {c.function.name}"
+            msgs.append({"role": "tool", "tool_call_id": c.id, "content": str(result)[:4000]})
+    # Ran out of rounds — one light synthesis pass
     try:
-        for _ in range(6):  # up to 6 tool rounds
-            r = client.chat.completions.create(
-                model=FAST_MODEL, messages=msgs, tools=AGENT_TOOLS,
-                tool_choice="auto", max_tokens=1500, temperature=0.4,
-            )
-            choice = r.choices[0].message
-            calls = choice.tool_calls
-            if not calls:
-                return choice.content or "Done."
-            msgs.append({"role": "assistant", "content": choice.content or "",
-                         "tool_calls": [{"id": c.id, "type": "function",
-                            "function": {"name": c.function.name, "arguments": c.function.arguments}}
-                            for c in calls]})
-            for c in calls:
-                try:
-                    args = json.loads(c.function.arguments or "{}")
-                except Exception:
-                    args = {}
-                fn = _TOOL_FNS.get(c.function.name)
-                result = fn(args) if fn else f"Unknown tool {c.function.name}"
-                msgs.append({"role": "tool", "tool_call_id": c.id,
-                             "content": str(result)[:6000]})
-        # Ran out of rounds — final synthesis without tools
-        r = client.chat.completions.create(model=FAST_MODEL, messages=msgs, max_tokens=1000)
+        r = client.chat.completions.create(model="llama-3.1-8b-instant", messages=msgs, max_tokens=700)
         return r.choices[0].message.content or "Done."
-    except Exception as e:
-        # Fall back to council if tool calling errors out
-        return council_answer(msg, history, facts)
+    except Exception:
+        return "I took several steps but ran out of room to finish. Ask me to continue."
 
 def browse_url(url):
     try:
@@ -706,14 +726,39 @@ def browse_url(url):
 
 GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
 
+# When the daily token limit on the primary model is hit, fall through these.
+FALLBACK_MODELS = ["llama-3.1-8b-instant", "gemma2-9b-it"]
+OR_FALLBACK = "meta-llama/llama-3.3-70b-instruct:free"  # OpenRouter, separate quota
+
+def _is_rate_limit(e):
+    s = str(e).lower()
+    return "429" in s or "rate limit" in s or "quota" in s
+
+def _one_call(model, messages, max_tokens):
+    use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
+    c = client if use_groq else or_client
+    r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
+    return r.choices[0].message.content.strip()
+
 def groq_chat(model, messages, max_tokens=1024):
-    try:
-        use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
-        c = client if use_groq else or_client
-        r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
-        return r.choices[0].message.content.strip()
-    except Exception as e:
-        return f"[Model error: {e}]"
+    # Try the requested model, then Groq fallbacks, then OpenRouter — so a daily
+    # limit on one model degrades gracefully instead of breaking everything.
+    chain = [model] + [m for m in FALLBACK_MODELS if m != model] + [OR_FALLBACK]
+    rate_limited = False
+    for m in chain:
+        try:
+            return _one_call(m, messages, max_tokens)
+        except Exception as e:
+            if _is_rate_limit(e):
+                rate_limited = True
+                continue
+            # non-rate error on the primary — try one fallback then give up
+            if m == chain[0]:
+                continue
+            break
+    if rate_limited:
+        return "[⚠ Daily model limit reached across providers. It resets on a rolling 24h window — try again later, or add a paid API key for unlimited use. I did NOT perform any action.]"
+    return "[Model temporarily unavailable. I did NOT perform any action — try again.]"
 
 def fast_answer(msg, history, facts):
     msgs = [{"role": "system", "content": JARVIS_PROMPT}]
@@ -1016,11 +1061,15 @@ def chat():
 
     # Deterministic route: email/PC/browser/web requests ALWAYS use the agent's
     # real tools — never the text-only paths that refuse or hallucinate.
-    if _wants_agent(msg_lo) or _agent_followup(msg_lo, history):
+    global _agent_until
+    if (_wants_agent(msg_lo) or _agent_followup(msg_lo, history)
+            or (time.time() < _agent_until and len(msg_lo) <= 60)):
         intent = "agent"
     else:
         history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
         intent = classify_intent(msg, history_snippet)
+    if intent == "agent":
+        _agent_until = time.time() + 150   # keep the next ~2.5min of follow-ups in-agent
 
     if intent == "chitchat":
         msgs = [{"role": "system", "content": JARVIS_PROMPT}, {"role": "user", "content": msg}]
