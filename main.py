@@ -857,8 +857,8 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 #intent-tag{padding:2px 10px;border:1px solid var(--border);border-radius:2px;font-family:var(--mono);font-size:8px;letter-spacing:0.18em;color:var(--text-muted);transition:all 0.35s;white-space:nowrap;}
 #intent-tag.on{border-color:rgba(0,212,255,0.5);color:var(--primary);background:var(--primary-dim);text-shadow:0 0 10px var(--primary);}
 #hdr-right{margin-left:auto;display:flex;align-items:center;gap:12px;flex-shrink:0;}
-#date-disp{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:0.12em;}
-#clock-disp{font-family:var(--mono);font-size:13px;color:var(--primary);letter-spacing:0.08em;text-shadow:0 0 14px rgba(0,212,255,0.5);min-width:72px;text-align:right;}
+#date-disp{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.12em;}
+#clock-disp{font-family:var(--mono);font-size:18px;color:var(--primary);letter-spacing:0.06em;text-shadow:0 0 20px rgba(0,212,255,0.7);min-width:90px;text-align:right;font-weight:700;}
 
 /* ── MAIN LAYOUT ─────────────────────────── */
 #main{flex:1;display:flex;overflow:hidden;position:relative;z-index:1;}
