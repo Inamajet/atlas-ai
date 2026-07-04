@@ -166,27 +166,27 @@ def classify_intent(msg, history_snippet):
 CATEGORIES:
 - chitchat: hi, hello, thanks, how are you, casual greetings ONLY
 - fast: simple factual lookups, definitions, quick math — ONE sentence answer is enough
-- search: needs live/current info, prices, recent news, today's events
-- browse: message contains a URL, OR mentions "mani os", "mani-os", "my dashboard", "my os", "vercel app"
-- council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy — DEFAULT to this when unsure
-- task: user wants a DELIVERABLE produced autonomously — "write me a report", "research and summarize", "build", "create"
+- agent: needs live web info, a URL read, multi-step research, OR asks Borfoli to DO/act — search the web, look something up, find and compare, then take action. Also anything mentioning "mani os", "my dashboard".
+- council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy from what's already known — DEFAULT to this when unsure and no live data / action is needed
+- task: user wants a LONG autonomous DELIVERABLE produced in the background — "write me a full report", "research and write up"
 
 EXAMPLES:
 "hi" → chitchat
 "what is VWAP" → fast
 "what can you do" → council
-"are you smarter than X" → council
 "what should I focus on" → council
 "explain penetration testing" → council
-"research cybersecurity certs and write a report" → task
-"what's the current ETH price" → search
 "should I do X or Y" → council
 "how does X work" → council
-"read this page and summarize it https://example.com/article" → browse
-"what does https://example.com say" → browse
-"what's on my mani os" → browse
-"check my dashboard" → browse
-"what's on my mani-os" → browse
+"research cybersecurity certs and write a full report" → task
+"what's the current ETH price" → agent
+"find me the cheapest flight to austin" → agent
+"look up the best creatine and add it to my tasks" → agent
+"read this page and summarize it https://example.com/article" → agent
+"what does https://example.com say" → agent
+"what's on my mani os" → agent
+"check my dashboard" → agent
+"log my workout and tell me my streak" → agent
 
 Message: {msg}
 
@@ -374,28 +374,27 @@ Reply with ONLY raw JSON, no markdown, no explanation."""
         patch = json.loads(raw)
         if not patch:
             return None
-
-        # Merge: if LLM returned a smaller array than current (missed existing items), merge
-        for field in _MANI_OS_ARRAY_FIELDS:
-            if field in patch and isinstance(patch[field], list):
-                full = state.get(field, [])
-                if len(patch[field]) < len(full):
-                    existing_ids = {x.get('id') or x.get('date') for x in patch[field]}
-                    kept = [x for x in full if (x.get('id') or x.get('date')) not in existing_ids]
-                    # prepend-style fields
-                    if field in ('tasks', 'gratitudeLog', 'loreLog', 'workoutSessions'):
-                        patch[field] = patch[field] + kept
-                    else:
-                        patch[field] = kept + patch[field]
-
-        state.update(patch)
-        ok, err2 = mani_os_put(state)
+        ok, err2 = _mani_apply_patch(state, patch)
         if not ok:
             return f"Read OK, write failed: {err2}"
-
         return ("__ok__", list(patch.keys()), patch)
     except Exception:
         return None
+
+def _mani_apply_patch(state, patch):
+    """Merge a JSON patch into full state (array-aware) and write back."""
+    for field in _MANI_OS_ARRAY_FIELDS:
+        if field in patch and isinstance(patch[field], list):
+            full = state.get(field, [])
+            if len(patch[field]) < len(full):
+                existing_ids = {x.get('id') or x.get('date') for x in patch[field]}
+                kept = [x for x in full if (x.get('id') or x.get('date')) not in existing_ids]
+                if field in ('tasks', 'gratitudeLog', 'loreLog', 'workoutSessions', 'drawingLog', 'latinLog'):
+                    patch[field] = patch[field] + kept
+                else:
+                    patch[field] = kept + patch[field]
+    state.update(patch)
+    return mani_os_put(state)
 
 def mani_os_read_answer(msg, history, facts):
     """Answer questions about Mani OS using live state data."""
@@ -411,6 +410,141 @@ def mani_os_read_answer(msg, history, facts):
     for h in history[-6:]: msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": msg})
     return groq_chat(FAST_MODEL, msgs, max_tokens=800)
+
+# ── Agentic tool loop — Borfoli's "hands" ──────────────────────────────────────
+# Real capabilities: browse the web, search, read live Mani OS state, control the
+# dashboard, and see Mani's PC. A tool-calling loop lets the model chain these.
+
+AGENT_TOOLS = [
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": "Search the live web for current information, prices, news, facts, product info, anything you don't already know. Returns top results.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "The search query"}
+        }, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
+        "name": "open_page",
+        "description": "Fetch and read the full text of a specific web page URL. Use after web_search to read a promising result, or when the user gives a URL.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "The full URL to open and read"}
+        }, "required": ["url"]}
+    }},
+    {"type": "function", "function": {
+        "name": "read_mani_os",
+        "description": "Read Mani's live Mani OS dashboard state — his calories, protein, weight, workouts, tasks, streak, supplements, drawing/Latin logs, everything. Use to answer questions about his data or before updating it.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "update_mani_os",
+        "description": "Change data on Mani's dashboard. Describe the change in plain language (e.g. 'log 40g protein', 'add task: buy Nizoral at Costco', 'set calorie target to 2400', 'log 30 min of drawing'). It applies immediately and shows on his dashboard within seconds.",
+        "parameters": {"type": "object", "properties": {
+            "instruction": {"type": "string", "description": "Plain-language description of what to change"}
+        }, "required": ["instruction"]}
+    }},
+    {"type": "function", "function": {
+        "name": "check_mani_pc",
+        "description": "Get live telemetry from Mani's Windows PC — CPU, RAM, active window, top processes. Only works when his local agent is running.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+]
+
+def _tool_web_search(query):
+    return web_search(query) or "No results found."
+
+def _tool_open_page(url):
+    return browse_url(url) or "Could not read that page."
+
+def _tool_read_mani_os():
+    state, err = mani_os_get()
+    if err: return f"Error reading Mani OS: {err}"
+    return json.dumps(_trim_state(state), indent=2)[:5000]
+
+def _tool_update_mani_os(instruction):
+    state, err = mani_os_get()
+    if err: return f"Error reading Mani OS: {err}"
+    today = datetime.now().strftime('%Y-%m-%d')
+    now_ms = int(time.time() * 1000)
+    prompt = f"""JSON mutation engine for Mani OS. Current state (arrays trimmed):
+{json.dumps(_trim_state(state), indent=2)[:3500]}
+Today: {today} | Now ms: {now_ms}
+Schema: {_MANI_SCHEMA}
+Instruction: "{instruction}"
+Return ONLY a JSON patch (changed fields only). Arrays: complete updated array. New IDs: uuid strings. Reply with raw JSON only."""
+    try:
+        r = client.chat.completions.create(model=FAST_MODEL,
+            messages=[{"role": "user", "content": prompt}], max_tokens=2000, temperature=0)
+        raw = r.choices[0].message.content.strip().lstrip('`').rstrip('`')
+        if raw.startswith('json\n'): raw = raw[5:]
+        patch = json.loads(raw)
+        if not patch: return "Nothing to change."
+        ok, err2 = _mani_apply_patch(state, patch)
+        return f"Updated fields: {list(patch.keys())}" if ok else f"Write failed: {err2}"
+    except Exception as e:
+        return f"Could not apply update: {e}"
+
+def _tool_check_mani_pc():
+    if not os_telemetry:
+        return "Mani's PC agent is offline — no telemetry available."
+    age = time.time() - os_telemetry.get("received_at", 0)
+    if age > 120:
+        return f"PC agent last seen {int(age)}s ago (stale)."
+    return json.dumps({k: os_telemetry.get(k) for k in
+        ("cpu", "ram", "active_window", "top_processes", "uptime_hours") if k in os_telemetry})
+
+_TOOL_FNS = {
+    "web_search":    lambda a: _tool_web_search(a.get("query", "")),
+    "open_page":     lambda a: _tool_open_page(a.get("url", "")),
+    "read_mani_os":  lambda a: _tool_read_mani_os(),
+    "update_mani_os":lambda a: _tool_update_mani_os(a.get("instruction", "")),
+    "check_mani_pc": lambda a: _tool_check_mani_pc(),
+}
+
+def agent_answer(msg, history, facts):
+    """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
+    os_ctx = get_os_context()
+    sys_blocks = [JARVIS_PROMPT,
+        "You have real tools: search the web, open pages, read and control Mani's dashboard, "
+        "and check his PC. USE them — don't guess when you can look it up, and actually make "
+        "changes when he asks. Chain tools as needed, then give a short, direct answer. "
+        "When you change his dashboard, confirm exactly what you changed."]
+    if facts: sys_blocks.append(f"Memory:\n{facts}")
+    if os_ctx: sys_blocks.append(os_ctx)
+
+    msgs = [{"role": "system", "content": "\n\n".join(sys_blocks)}]
+    for h in history[-6:]:
+        msgs.append({"role": h["role"], "content": h["content"]})
+    msgs.append({"role": "user", "content": msg})
+
+    try:
+        for _ in range(6):  # up to 6 tool rounds
+            r = client.chat.completions.create(
+                model=FAST_MODEL, messages=msgs, tools=AGENT_TOOLS,
+                tool_choice="auto", max_tokens=1500, temperature=0.4,
+            )
+            choice = r.choices[0].message
+            calls = choice.tool_calls
+            if not calls:
+                return choice.content or "Done."
+            msgs.append({"role": "assistant", "content": choice.content or "",
+                         "tool_calls": [{"id": c.id, "type": "function",
+                            "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                            for c in calls]})
+            for c in calls:
+                try:
+                    args = json.loads(c.function.arguments or "{}")
+                except Exception:
+                    args = {}
+                fn = _TOOL_FNS.get(c.function.name)
+                result = fn(args) if fn else f"Unknown tool {c.function.name}"
+                msgs.append({"role": "tool", "tool_call_id": c.id,
+                             "content": str(result)[:6000]})
+        # Ran out of rounds — final synthesis without tools
+        r = client.chat.completions.create(model=FAST_MODEL, messages=msgs, max_tokens=1000)
+        return r.choices[0].message.content or "Done."
+    except Exception as e:
+        # Fall back to council if tool calling errors out
+        return council_answer(msg, history, facts)
 
 def browse_url(url):
     try:
@@ -690,10 +824,9 @@ def chat():
     if intent == "chitchat":
         msgs = [{"role": "system", "content": JARVIS_PROMPT}, {"role": "user", "content": msg}]
         reply = groq_chat(FAST_MODEL, msgs, max_tokens=300)
-    elif intent == "search":
-        reply = search_answer(msg, history, facts)
-    elif intent == "browse":
-        reply = browse_answer(msg, history, facts)
+    elif intent in ("search", "browse", "agent"):
+        # Agentic loop — real web browsing + dashboard control, chained
+        reply = agent_answer(msg, history, facts)
     elif intent == "council":
         reply = council_answer(msg, history, facts)
     elif intent == "task":
