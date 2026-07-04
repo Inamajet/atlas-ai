@@ -448,6 +448,13 @@ AGENT_TOOLS = [
         "parameters": {"type": "object", "properties": {}}
     }},
     {"type": "function", "function": {
+        "name": "see_screen",
+        "description": "Look at what's on Mani's screen right now — his eyes. Captures a screenshot and describes it. Use when he asks what's on his screen, to check what he's working on, or to help with something he's looking at.",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "What to look for / what you want to know about the screen"}
+        }}
+    }},
+    {"type": "function", "function": {
         "name": "pc_open",
         "description": "Open an app, file, folder, or website on Mani's PC (e.g. 'chrome', 'notepad', 'C:/Users/Manit/Downloads', 'https://gmail.com'). Runs immediately.",
         "parameters": {"type": "object", "properties": {
@@ -520,6 +527,23 @@ Return ONLY a JSON patch (changed fields only). Arrays: complete updated array. 
     except Exception as e:
         return f"Could not apply update: {e}"
 
+def _tool_see_screen(question):
+    b64 = run_on_pc("screenshot", {}, timeout=35)
+    if not b64 or len(b64) < 300:
+        return b64 or "Couldn't capture the screen."
+    try:
+        r = or_client.chat.completions.create(
+            model="meta-llama/llama-3.2-11b-vision-instruct:free",
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "text", "text": question or "What's on the screen right now? Describe what the user is doing and anything notable."}
+            ]}],
+            max_tokens=1000,
+        )
+        return r.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Captured the screen but couldn't interpret it: {e}"
+
 def _tool_check_mani_pc():
     if not os_telemetry:
         return "Mani's PC agent is offline — no telemetry available."
@@ -535,6 +559,7 @@ _TOOL_FNS = {
     "read_mani_os":  lambda a: _tool_read_mani_os(),
     "update_mani_os":lambda a: _tool_update_mani_os(a.get("instruction", "")),
     "check_mani_pc": lambda a: _tool_check_mani_pc(),
+    "see_screen":    lambda a: _tool_see_screen(a.get("question", "")),
     "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
     "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
@@ -547,8 +572,9 @@ def agent_answer(msg, history, facts):
     os_ctx = get_os_context()
     sys_blocks = [JARVIS_PROMPT,
         "You have real tools — USE them, don't guess: search the web, open/read pages, "
-        "read and control Mani's dashboard, and control his PC (open apps/files/sites, read "
-        "files, run commands, read his email, send email as him). Chain tools as needed, then "
+        "read and control Mani's dashboard, see his screen (see_screen), and control his PC "
+        "(open apps/files/sites, read files, run commands, read his email, send email as him). "
+        "Chain tools as needed, then "
         "give a short, direct answer. Running commands and sending email require his approval on "
         "his machine — go ahead and call the tool, he'll approve or decline. Always confirm "
         "exactly what you did (what changed, what you sent, to whom)."]
