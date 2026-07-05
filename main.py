@@ -835,10 +835,10 @@ def groq_chat(model, messages, max_tokens=1024):
 # Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
 # old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
 VISION_CHAIN = [
-    ("gemini-2.0-flash",                              "google"),      # direct Google API, big free quota
-    ("gemini-2.5-flash",                              "google"),
-    ("google/gemini-2.0-flash-exp:free",              "openrouter"),  # OpenRouter fallback (small limit)
-    ("meta-llama/llama-3.2-11b-vision-instruct:free", "openrouter"),
+    ("meta/llama-3.2-90b-vision-instruct", "nvidia"),   # free via working NVIDIA key
+    ("meta/llama-3.2-11b-vision-instruct", "nvidia"),
+    ("gemini-2.0-flash",                   "google"),   # best, but needs a VALID GEMINI_API_KEY
+    ("gemini-2.5-flash",                   "google"),
 ]
 
 _last_vision_errors = []   # diagnostics: why each vision model failed on the last call
