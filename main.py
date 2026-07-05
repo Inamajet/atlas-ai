@@ -1549,11 +1549,66 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
 .step-ln{font-family:var(--mono);font-size:9px;color:var(--accent);margin-bottom:2px;letter-spacing:0.04em;}
 #drw-dl{margin:0 18px 18px;padding:7px;background:var(--primary-dim);border:1px solid rgba(0,212,255,0.28);color:var(--primary);font-family:var(--mono);font-size:8px;letter-spacing:0.18em;cursor:pointer;border-radius:3px;display:none;}
 #drw-dl:hover{background:rgba(0,212,255,0.12);}
+
+/* ── POLISH: smoother scrollbars + micro-interactions ─────────── */
+*::-webkit-scrollbar{width:4px;height:4px;}
+*::-webkit-scrollbar-thumb{background:rgba(0,212,255,0.22);border-radius:99px;}
+*::-webkit-scrollbar-thumb:hover{background:var(--border-hi);}
+.spanel,#msgs,#drw-body{scroll-behavior:smooth;}
+.sec-lbl{transition:color 0.25s;}
+.spanel .sec:hover .sec-lbl{color:rgba(0,212,255,0.75);}
+#sbtn:active,.tbtn:active{transform:translateY(0) scale(0.94);}
+.bubble{transition:box-shadow 0.3s;}
+.msg.assistant:hover .bubble{box-shadow:0 6px 30px rgba(0,0,0,0.4),inset 0 1px 0 rgba(0,212,255,0.12);}
+
+/* ── MOBILE PANEL TOGGLES (hidden on desktop) ─────────────────── */
+.mtoggle{display:none;align-items:center;justify-content:center;width:36px;height:36px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--primary);font-size:16px;cursor:pointer;flex-shrink:0;transition:all 0.15s;}
+.mtoggle:hover,.mtoggle.active{border-color:var(--primary);background:var(--primary-dim);box-shadow:0 0 14px rgba(0,212,255,0.25);}
+#panel-backdrop{display:none;}
+
+/* ── RESPONSIVE: tablet & phone ───────────────────────────────── */
+@media (max-width:900px){
+  #lp-toggle{display:flex;margin-right:12px;}
+  #rp-toggle{display:flex;margin-left:auto;}
+  .h-badge,#intent-tag,#date-disp{display:none;}
+  #hdr .h-sep{display:none;}
+  #hdr{padding:0 12px;height:54px;}
+  #logo{font-size:12px;letter-spacing:0.22em;}
+  #hdr-right{gap:10px;margin-left:0;}
+  #clock-disp{font-size:15px;min-width:auto;}
+
+  /* side panels become off-canvas overlays */
+  .spanel{position:fixed;top:54px;height:calc(100vh - 54px);width:min(82vw,300px);z-index:350;
+    box-shadow:0 0 46px rgba(0,0,0,0.65);transition:transform 0.28s cubic-bezier(.4,0,.2,1);}
+  #lpanel{left:0;border-right:1px solid var(--border-hi);transform:translateX(-104%);}
+  #rpanel{right:0;border-left:1px solid var(--border-hi);transform:translateX(104%);}
+  #lpanel.open,#rpanel.open{transform:translateX(0);}
+  #panel-backdrop.show{display:block;position:fixed;inset:54px 0 0;background:rgba(0,4,12,0.62);
+    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:340;animation:fadein 0.25s;}
+  @keyframes fadein{from{opacity:0;}to{opacity:1;}}
+
+  #msgs{padding:14px 14px;gap:10px;}
+  .msg.user{max-width:88%;}
+  .msg.assistant{max-width:94%;}
+  #input-area{padding:6px 12px 12px;}
+  #hint{font-size:7.5px;gap:6px;}
+  #voice-sel{max-width:150px;}
+}
+@media (max-width:480px){
+  #logo{font-size:11px;letter-spacing:0.14em;}
+  .bubble{font-size:13px;padding:10px 13px;line-height:1.65;}
+  #clock-disp{font-size:13px;}
+  .av{width:26px;height:26px;}
+  .tbtn{width:30px;height:30px;font-size:12px;}
+  #sbtn{width:32px;height:32px;}
+}
+@media (min-width:901px){.mtoggle{display:none!important;}#panel-backdrop{display:none!important;}}
 </style>
 </head>
 <body>
 
 <div id="hdr">
+  <button class="mtoggle" id="lp-toggle" onclick="togglePanel('lpanel')" title="System panel">☰</button>
   <div id="logo">◈ BORFOLI</div>
   <div class="h-sep"></div>
   <div class="h-badge live"><span class="h-dot"></span>NEURAL LINK</div>
@@ -1565,8 +1620,10 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
     <div id="date-disp"></div>
     <div class="h-sep" style="margin:0 10px"></div>
     <div id="clock-disp">00:00:00</div>
+    <button class="mtoggle" id="rp-toggle" onclick="togglePanel('rpanel')" title="Tasks panel">▦</button>
   </div>
 </div>
+<div id="panel-backdrop" onclick="closePanels()"></div>
 
 <div id="main">
 
@@ -1651,6 +1708,25 @@ function tick(){
   document.getElementById('date-disp').textContent=DAYS[n.getDay()]+' '+p(n.getDate())+' '+MONTHS[n.getMonth()];
 }
 tick();setInterval(tick,1000);
+
+// ── Mobile panel toggles ───────────────────────────────────────
+function togglePanel(id){
+  const p=document.getElementById(id),bd=document.getElementById('panel-backdrop');
+  const other=document.getElementById(id==='lpanel'?'rpanel':'lpanel');
+  other.classList.remove('open');
+  const opening=!p.classList.contains('open');
+  p.classList.toggle('open',opening);
+  bd.classList.toggle('show',opening);
+  document.getElementById('lp-toggle').classList.toggle('active',id==='lpanel'&&opening);
+  document.getElementById('rp-toggle').classList.toggle('active',id==='rpanel'&&opening);
+}
+function closePanels(){
+  document.getElementById('lpanel').classList.remove('open');
+  document.getElementById('rpanel').classList.remove('open');
+  document.getElementById('panel-backdrop').classList.remove('show');
+  document.getElementById('lp-toggle').classList.remove('active');
+  document.getElementById('rp-toggle').classList.remove('active');
+}
 
 // ── Orb ───────────────────────────────────────────────────────
 const CV=document.getElementById('cv'),CTX=CV.getContext('2d');
