@@ -1021,21 +1021,24 @@ AGENT_INSTRUCTIONS = (
     "running so you can't reach his machine — don't pretend it worked. Report only what tools returned."
 )
 
+_last_tool_err = {"e": ""}
+
 def _tool_completion(msgs, max_tokens=900):
-    """Tool-calling completion with rate-limit fallback to a lighter model.
+    """Tool-calling completion. Tries Groq 70b then 8b on ANY error (not just rate
+    limits) with a generous timeout — tool calls with big prompts can be slow.
     Returns (response, error_kind) — error_kind is None, 'rate', or 'error'."""
-    # Tool-calling runs on the Groq `client`, so use Groq model ids here (FAST_MODEL
-    # is now an OpenRouter id and would be rejected → silent 8B fallback).
+    last = ""
     for m in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
         try:
             r = client.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
-                tool_choice="auto", max_tokens=max_tokens, temperature=0.3)
+                tool_choice="auto", max_tokens=max_tokens, temperature=0.3, timeout=45)
             return r, None
         except Exception as e:
-            if _is_rate_limit(e):
-                continue
-            return None, "error"
-    return None, "rate"
+            last = f"{type(e).__name__}: {e}"
+            continue                      # try the next model on ANY failure
+    _last_tool_err["e"] = last[:400]
+    kind = "rate" if ("rate" in last.lower() or "429" in last or "quota" in last.lower()) else "error"
+    return None, kind
 
 def agent_answer(msg, history, facts):
     """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
@@ -1056,7 +1059,7 @@ def agent_answer(msg, history, facts):
                     "It resets on a rolling 24h window — try again later, or add a paid API key for "
                     "unlimited use. I did NOT do anything just now.")
         if err:
-            return "I hit an error reaching my tools, so nothing was done. Try that again in a moment."
+            return "I hit an error reaching my tools, so nothing was done. [debug: " + _last_tool_err.get("e", "") + "]"
         choice = r.choices[0].message
         calls = choice.tool_calls
         if not calls:
