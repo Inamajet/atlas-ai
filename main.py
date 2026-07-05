@@ -146,22 +146,24 @@ _WMO = {0:"clear",1:"mostly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:
         77:"snow",80:"showers",81:"showers",82:"heavy showers",85:"snow showers",86:"snow showers",
         95:"thunderstorms",96:"thunderstorms",99:"thunderstorms"}
 _weather_cache = {"t": 0, "text": "", "err": ""}
+_WX_UA = {"User-Agent": "Borfoli/1.0 (mani personal assistant)"}
+_wx_grid = {"url": ""}   # NWS gridpoint forecast URL (resolved once, never changes)
 
 def _weather():
+    # US National Weather Service — keyless, no per-IP daily cap (open-meteo's free
+    # tier rate-limits Render's shared IP). Frisco TX is in the US so NWS covers it.
     if time.time() - _weather_cache["t"] < 1800 and _weather_cache["text"]:
         return _weather_cache["text"]
     try:
-        r = requests.get("https://api.open-meteo.com/v1/forecast",
-            params={"latitude": 33.15, "longitude": -96.82,
-                    "current_weather": "true", "temperature_unit": "fahrenheit"}, timeout=12)
-        j = r.json()
-        cur = j.get("current_weather") or j.get("current") or {}
-        temp = cur.get("temperature", cur.get("temperature_2m"))
-        code = cur.get("weathercode", cur.get("weather_code"))
-        if temp is None:
-            _weather_cache["err"] = f"no temp; body={str(j)[:150]}"
-            return _weather_cache["text"]
-        txt = f"{round(temp)}°F {_WMO.get(code, '')}".strip()
+        if not _wx_grid["url"]:
+            p = requests.get("https://api.weather.gov/points/33.15,-96.82",
+                             headers=_WX_UA, timeout=12).json()
+            _wx_grid["url"] = p["properties"]["forecastHourly"]
+        f = requests.get(_wx_grid["url"], headers=_WX_UA, timeout=12).json()
+        per = f["properties"]["periods"][0]
+        temp, unit = per["temperature"], per.get("temperatureUnit", "F")
+        short = (per.get("shortForecast") or "").lower()
+        txt = f"{temp}°{unit} {short}".strip()
         _weather_cache.update({"t": time.time(), "text": txt, "err": ""})
         return txt
     except Exception as e:
@@ -1569,15 +1571,20 @@ def greeting():
     like Jarvis booting up. Time + weather aware, optionally notes his active window."""
     live = get_live_context()
     os_ctx = get_os_context()
-    situ = (f"\n{os_ctx}" if os_ctx else
-            "\n[His desktop agent is OFFLINE — you CANNOT see his screen, apps, or what he's doing right now.]")
+    situ = (f"\n{os_ctx}" if os_ctx else "")
+    has_wx = "°" in live
+    wx_rule = ("" if has_wx else
+               "There is NO weather data — do NOT mention weather, temperature, heat, or humidity at all.\n")
     prompt = (f"{JARVIS_PROMPT}\n\n{live}{situ}\n\n"
-              "Mani just opened you. Greet him ONCE, like Jarvis on startup. Use ONLY the facts above — "
-              "the real current time and the Frisco weather. Match the greeting to the ACTUAL hour "
-              "(if it's night/late, acknowledge he's up late — do NOT say 'good morning'). "
-              "HARD RULE: unless a '[MANI'S DESKTOP]' block appears above, you have NO idea what's on his screen "
-              "or what he's doing — do NOT mention his screen, apps, files, or activity; do not invent it. "
-              "1-2 sharp sentences, warm, no fluff, no emojis, no markdown, and no generic 'how can I help'.")
+              "Mani just opened the app. Say ONE short spoken greeting (1-2 sentences), like Jarvis booting up.\n"
+              "FACTS YOU MAY USE: only the day, time, and any weather shown in [RIGHT NOW] above" +
+              (" and his desktop context" if os_ctx else "") + ". Nothing else.\n"
+              "FORBIDDEN: do NOT guess or mention what's on his screen, what apps he's in, or what he's working on"
+              + ("" if os_ctx else " — his agent is offline so you are BLIND to his screen") + ". "
+              "Do NOT invent any number or detail not shown above.\n"
+              f"{wx_rule}"
+              "Match the greeting to the REAL hour (late/night → note he's up late, never 'good morning' at night). "
+              "No emojis, no markdown, no 'how can I help'.")
     reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110)
     return jsonify({"greeting": reply, "context": live,
                     "wx": _weather_cache.get("text", ""), "wx_err": _weather_cache.get("err", "")})
