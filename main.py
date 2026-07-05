@@ -854,6 +854,41 @@ AGENT_TOOLS = [
         }, "required": ["to", "subject", "body"]}
     }},
     {"type": "function", "function": {
+        "name": "browse_open",
+        "description": "Open a URL (or a search) in Mani's SANDBOXED browser — a separate window Borfoli drives with its own cursor, never touching his real mouse. Use this for ALL web tasks (research, sites, forms, logins he asks for). Returns the page text + a numbered list of clickable/typeable elements. Requires his PC agent running.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "URL, site name ('youtube'), bare domain, or a search phrase"}
+        }, "required": ["url"]}
+    }},
+    {"type": "function", "function": {
+        "name": "browse_look",
+        "description": "Re-read the current sandboxed-browser page — its text and numbered interactive elements. Use to see the page again after scrolling or if refs are stale.",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "browse_click",
+        "description": "Click an element in the sandboxed browser by its [number] ref from the element list. Returns the updated page.",
+        "parameters": {"type": "object", "properties": {
+            "ref": {"type": "integer", "description": "The [number] of the element to click"}
+        }, "required": ["ref"]}
+    }},
+    {"type": "function", "function": {
+        "name": "browse_type",
+        "description": "Type text into an input/textarea in the sandboxed browser by its [number] ref. Set enter=true to submit (e.g. a search box).",
+        "parameters": {"type": "object", "properties": {
+            "ref": {"type": "integer", "description": "The [number] of the input element"},
+            "text": {"type": "string", "description": "Text to type"},
+            "enter": {"type": "boolean", "description": "Press Enter after typing (submit)"}
+        }, "required": ["ref", "text"]}
+    }},
+    {"type": "function", "function": {
+        "name": "browse_scroll",
+        "description": "Scroll the sandboxed browser page. Positive = down, negative = up.",
+        "parameters": {"type": "object", "properties": {
+            "amount": {"type": "integer", "description": "Pixels to scroll, e.g. 600 down or -600 up"}
+        }}
+    }},
+    {"type": "function", "function": {
         "name": "search_notes",
         "description": "Search Mani's personal Obsidian knowledge vault — his own notes, ideas, research, study material, plans and logs. Use whenever he references 'my notes', asks about something he wrote down / studied / planned, or when his personal knowledge would answer better than the web.",
         "parameters": {"type": "object", "properties": {
@@ -942,6 +977,11 @@ _TOOL_FNS = {
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
     "search_notes":  lambda a: _tool_search_notes(a.get("query", ""), a.get("k", 5)),
+    "browse_open":   lambda a: run_on_pc("browser_open", {"url": a.get("url", "")}, timeout=45),
+    "browse_look":   lambda a: run_on_pc("browser_look", {}, timeout=25),
+    "browse_click":  lambda a: run_on_pc("browser_click", {"ref": a.get("ref")}, timeout=30),
+    "browse_type":   lambda a: run_on_pc("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
+    "browse_scroll": lambda a: run_on_pc("browser_scroll", {"amount": a.get("amount", 600)}, timeout=25),
 }
 
 AGENT_INSTRUCTIONS = (
@@ -952,9 +992,13 @@ AGENT_INSTRUCTIONS = (
     "When he asks you to open, launch, play, show, run, or check something, JUST DO IT with the "
     "tools. Do NOT lecture him about productivity, refuse casual requests, or steer him back to his "
     "goals — he decides what he wants. Only discuss his goals if he explicitly asks what to work on. "
-    "To operate the computer: call see_screen FIRST (it reports the screen resolution), then pc_click "
-    "at the pixel coordinates you saw, pc_type to type, pc_key for keys/shortcuts (enter, ctrl+c, "
-    "alt+tab), pc_scroll to scroll. Look again with see_screen to verify and correct a missed click. "
+    "TWO ways to act: (1) For anything on the WEB — research, sites, forms, logins, YouTube, shopping — "
+    "use the SANDBOXED BROWSER: browse_open(url or search) then browse_click(ref)/browse_type(ref,text,enter=true) "
+    "using the [numbered] elements it returns, browse_look to re-read, browse_scroll to scroll. It runs in its own "
+    "window with its own cursor and NEVER touches Mani's real mouse, so prefer it for all web work. "
+    "(2) For DESKTOP apps (Notepad, files, settings, non-browser windows) use the real cursor: see_screen FIRST "
+    "(it reports the screen resolution), then pc_click at the pixel coordinates you saw, pc_type to type, pc_key for "
+    "keys/shortcuts, pc_scroll to scroll; look again with see_screen to verify and correct a missed click. "
     "Shell commands and sending email need his approval on his machine — just call the tool, he'll "
     "approve or decline. Keep answers short. "
     "CRITICAL HONESTY RULE: NEVER claim you opened, read, saw, sent, or changed anything unless a tool "
