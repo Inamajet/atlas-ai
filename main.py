@@ -641,8 +641,9 @@ def vault_context(query, k=3):
     top = [c for _, c in scored[:k]]
     if not top:
         return ""
-    return "From Mani's own notes (use these as the source of truth):\n" + \
-           "\n".join(f"[{c['title']}] {c['text'][:400]}" for c in top)
+    return ("From Mani's own notes — AUTHORITATIVE. Quote figures, counts, names and "
+            "instructions EXACTLY as written here; never substitute your general knowledge:\n" +
+            "\n".join(f"[{c['title']}] {c['text'][:400]}" for c in top))
 
 def _tool_search_notes(query, k=5):
     res = vault_search(query, min(int(k or 5), 8))
@@ -1398,9 +1399,12 @@ def chat():
     # Deterministic route: email/PC/browser/web requests ALWAYS use the agent's
     # real tools — never the text-only paths that refuse or hallucinate.
     global _agent_until
+    _note_q = any(p in msg_lo for p in ("my note", "my vault", "in my notes", "my obsidian", "notes say"))
     if (_wants_agent(msg_lo) or _agent_followup(msg_lo, history)
             or (time.time() < _agent_until and len(msg_lo) <= 60)):
         intent = "agent"
+    elif _note_q and VAULT_INDEX["chunks"]:
+        intent = "notes"          # faithful single-model answer straight from his notes
     else:
         history_snippet = " | ".join(h["content"][:60] for h in history[-3:]) if history else ""
         intent = classify_intent(msg, history_snippet)
@@ -1415,6 +1419,8 @@ def chat():
         reply = agent_answer(msg, history, facts)
     elif intent == "council":
         reply = council_answer(msg, history, facts)
+    elif intent == "notes":
+        reply = fast_answer(msg, history, facts)
     elif intent == "task":
         task_id = str(uuid.uuid4())
         task_store[task_id] = {"status": "queued", "goal": msg, "result": "", "steps": [], "started": time.time()}
