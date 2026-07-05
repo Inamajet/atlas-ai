@@ -1040,6 +1040,28 @@ def _tool_completion(msgs, max_tokens=900):
     kind = "rate" if ("rate" in last.lower() or "429" in last or "quota" in last.lower()) else "error"
     return None, kind
 
+def _parse_text_tools(content):
+    """Groq's llama models sometimes emit tool calls as TEXT (e.g.
+    <web_search>{"query":"x"}</web_search> or {"name":"web_search","arguments":{...}})
+    instead of native tool_calls. Extract them so the agent still works."""
+    calls = []
+    if not content:
+        return calls
+    # form 1: <toolname>{json}</toolname>  or  <function=toolname>{json}
+    for m in re.finditer(r'<(?:function=)?([a-zA-Z_]+)>\s*(\{.*?\})', content, re.DOTALL):
+        name = m.group(1)
+        if name in _TOOL_FNS:
+            try: calls.append((name, json.loads(m.group(2))))
+            except Exception: calls.append((name, {}))
+    # form 2: {"name":"tool","arguments":{...}} / "parameters"
+    if not calls:
+        for m in re.finditer(r'"name"\s*:\s*"([a-zA-Z_]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*(\{.*?\})', content, re.DOTALL):
+            name = m.group(1)
+            if name in _TOOL_FNS:
+                try: calls.append((name, json.loads(m.group(2))))
+                except Exception: calls.append((name, {}))
+    return calls
+
 def agent_answer(msg, history, facts):
     """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
     os_ctx = get_os_context()
@@ -1063,6 +1085,18 @@ def agent_answer(msg, history, facts):
         choice = r.choices[0].message
         calls = choice.tool_calls
         if not calls:
+            # Fallback: model emitted tool calls as text instead of native tool_calls
+            text_calls = _parse_text_tools(choice.content)
+            if text_calls:
+                msgs.append({"role": "assistant", "content": choice.content or ""})
+                results = []
+                for name, args in text_calls:
+                    fn = _TOOL_FNS.get(name)
+                    results.append(f"[{name}] → {str(fn(args) if fn else 'unknown tool')[:3500]}")
+                msgs.append({"role": "user", "content":
+                    "Tool results:\n" + "\n\n".join(results) +
+                    "\n\nNow answer Mani directly using these results. Do NOT emit any more tool syntax."})
+                continue
             return choice.content or "Done."
         msgs.append({"role": "assistant", "content": choice.content or "",
                      "tool_calls": [{"id": c.id, "type": "function",
