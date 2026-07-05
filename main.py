@@ -834,8 +834,12 @@ VISION_CHAIN = [
     ("meta-llama/llama-3.2-11b-vision-instruct:free", "openrouter"),
 ]
 
+_last_vision_errors = []   # diagnostics: why each vision model failed on the last call
+
 def vision_call(b64, prompt, max_tokens=1200):
     """Send a screenshot + prompt down the vision waterfall. Returns text or None."""
+    global _last_vision_errors
+    _last_vision_errors = []
     content = [
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
         {"type": "text", "text": prompt},
@@ -844,8 +848,10 @@ def vision_call(b64, prompt, max_tokens=1200):
     for m, prov in VISION_CHAIN:
         c = _client_for(prov)
         if c is None:
+            _last_vision_errors.append(f"{m}: no client")
             continue
         if _cooldown.get((m, prov), 0) > now:
+            _last_vision_errors.append(f"{m}: cooling down")
             continue
         try:
             r = c.chat.completions.create(
@@ -853,7 +859,9 @@ def vision_call(b64, prompt, max_tokens=1200):
             out = (r.choices[0].message.content or "").strip()
             if out:
                 return THINK_RE.sub("", out).strip()
+            _last_vision_errors.append(f"{m}: empty response")
         except Exception as e:
+            _last_vision_errors.append(f"{m}: {str(e)[:180]}")
             if _is_rate_limit(e):
                 _cooldown[(m, prov)] = time.time() + 120
             continue
@@ -1329,7 +1337,10 @@ def vision():
     facts, _ = load_memory()
     full_prompt = f"{JARVIS_PROMPT}\n\nUser memory:\n{facts}\n\nUser says: {prompt}"
     ans = vision_call(image_b64, full_prompt, max_tokens=1500)
-    return jsonify({"reply": ans or "Vision temporarily unavailable — try again."})
+    if ans:
+        return jsonify({"reply": ans})
+    return jsonify({"reply": "Vision temporarily unavailable — try again.",
+                    "debug": _last_vision_errors})
 
 # ── Realistic TTS (ElevenLabs) ─────────────────────────────────────────────────
 # Set ELEVENLABS_KEY (and optionally ELEVENLABS_VOICE) as env vars to enable a
