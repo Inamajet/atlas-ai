@@ -62,6 +62,12 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 gemini_client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
                        api_key=GEMINI_KEY, timeout=CLIENT_TIMEOUT) if GEMINI_KEY else None
 
+# Cerebras — free, blazing-fast, and DOES native tool-calling (like Groq). A second
+# tool-calling provider so the agent survives Groq's daily limit. Free key: cloud.cerebras.ai
+CEREBRAS_KEY = os.environ.get("CEREBRAS_API_KEY")
+cerebras_client = OpenAI(base_url="https://api.cerebras.ai/v1", api_key=CEREBRAS_KEY,
+                         timeout=CLIENT_TIMEOUT) if CEREBRAS_KEY else None
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TAVILY_KEY = os.environ.get("TAVILY_KEY")
@@ -1038,11 +1044,15 @@ _last_tool_err = {"e": ""}
 # tools keep working on NVIDIA / OpenRouter instead of dying. Text-format tool calls
 # from models that don't emit native tool_calls are caught by _parse_text_tools.
 _TOOL_CHAIN = [
+    # Native tool-calling providers, best-first. Groq + Cerebras are the reliable free
+    # ones; Cerebras covers Groq's daily limit. Others are long-shot fallbacks.
+    ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
     ("llama-3.3-70b-versatile",                 "groq"),
+    ("llama-3.3-70b",                           "cerebras"),    # only if key set
     ("llama-3.1-8b-instant",                    "groq"),
+    ("llama3.1-8b",                             "cerebras"),
     ("nvidia/llama-3.1-nemotron-70b-instruct",  "nvidia"),
     ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),
-    ("qwen/qwen-2.5-72b-instruct:free",         "openrouter"),
 ]
 
 def _tool_completion(msgs, max_tokens=900):
@@ -1165,7 +1175,8 @@ _cooldown = {}   # (model, provider) -> epoch when usable again
 
 def _client_for(provider):
     return {"groq": client, "openrouter": or_client, "nvidia": nv_client,
-            "anthropic": claude_client, "google": gemini_client}.get(provider)
+            "anthropic": claude_client, "google": gemini_client,
+            "cerebras": cerebras_client}.get(provider)
 
 def _guess_provider(model):
     if claude_client and model.startswith("claude"): return "anthropic"
