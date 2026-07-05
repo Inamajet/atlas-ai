@@ -1565,6 +1565,59 @@ def vault_status():
     return jsonify({"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]),
                     "method": VAULT_INDEX["method"], "updated": VAULT_INDEX["updated"]})
 
+# ── PWA: installable app (own window, home-screen icon) with ZERO extra resources ──
+@app.route("/manifest.json")
+def manifest():
+    return jsonify({
+        "name": "Borfoli", "short_name": "Borfoli",
+        "description": "Mani's personal AI system",
+        "start_url": "/", "display": "standalone",
+        "background_color": "#000814", "theme_color": "#000814",
+        "orientation": "any",
+        "icons": [
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    })
+
+def _make_icon(size):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (size, size), (0, 8, 20))
+    d = ImageDraw.Draw(img)
+    c, r = size // 2, int(size * 0.30)
+    # glowing cyan diamond (the ◈ mark)
+    for i, alpha in ((r + size // 22, 60), (r, 255)):
+        col = (0, 160 + alpha // 3, 255)
+        d.polygon([(c, c - i), (c + i, c), (c, c + i), (c - i, c)], fill=col)
+    d.polygon([(c, c - r // 2), (c + r // 2, c), (c, c + r // 2), (c - r // 2, c)], fill=(0, 8, 20))
+    import io
+    buf = io.BytesIO(); img.save(buf, "PNG"); return buf.getvalue()
+
+@app.route("/icon-<int:size>.png")
+def app_icon(size):
+    size = 512 if size >= 512 else 192
+    try:
+        return Response(_make_icon(size), mimetype="image/png",
+                        headers={"Cache-Control": "public, max-age=604800"})
+    except Exception:
+        return Response(b"", status=404)
+
+@app.route("/sw.js")
+def service_worker():
+    # Minimal network-first service worker — makes it installable; no aggressive
+    # caching so it never serves stale app code.
+    js = """
+const C='borfoli-v1';
+self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(clients.claim()));
+self.addEventListener('fetch',e=>{
+  if(e.request.method!=='GET')return;
+  e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
+});
+"""
+    return Response(js, mimetype="application/javascript",
+                    headers={"Cache-Control": "no-cache"})
+
 @app.route("/greeting")
 def greeting():
     """A proactive, situationally-aware greeting Borfoli says when Mani opens it —
@@ -1670,6 +1723,12 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BORFOLI</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000814">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Borfoli">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -2156,6 +2215,9 @@ async function greetOnLoad(){
   }catch(e){ if(gb)gb.textContent='Online. What do you need?'; }
 }
 greetOnLoad();
+
+// ── PWA: register service worker so Borfoli is installable as an app ──
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}
 
 // ── Chat ──────────────────────────────────────────────────────
 const INTENTS={chitchat:'CASUAL',fast:'FAST QUERY',search:'LIVE SEARCH',browse:'BROWSE',council:'COUNCIL · 6',task:'CREW TASK'};
