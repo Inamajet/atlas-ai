@@ -152,10 +152,16 @@ def _weather():
         return _weather_cache["text"]
     try:
         r = requests.get("https://api.open-meteo.com/v1/forecast",
-            params={"latitude": 33.15, "longitude": -96.82, "current": "temperature_2m,weather_code",
-                    "temperature_unit": "fahrenheit", "timezone": "America/Chicago"}, timeout=12)
-        d = r.json()["current"]
-        txt = f"{round(d['temperature_2m'])}°F {_WMO.get(d['weather_code'], '')}".strip()
+            params={"latitude": 33.15, "longitude": -96.82,
+                    "current_weather": "true", "temperature_unit": "fahrenheit"}, timeout=12)
+        j = r.json()
+        cur = j.get("current_weather") or j.get("current") or {}
+        temp = cur.get("temperature", cur.get("temperature_2m"))
+        code = cur.get("weathercode", cur.get("weather_code"))
+        if temp is None:
+            _weather_cache["err"] = f"no temp; body={str(j)[:150]}"
+            return _weather_cache["text"]
+        txt = f"{round(temp)}°F {_WMO.get(code, '')}".strip()
         _weather_cache.update({"t": time.time(), "text": txt, "err": ""})
         return txt
     except Exception as e:
