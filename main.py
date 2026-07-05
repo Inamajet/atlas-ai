@@ -1058,24 +1058,24 @@ _TOOL_CHAIN = [
 def _tool_completion(msgs, max_tokens=900):
     """Waterfall tool-calling across all providers. Returns (response, error_kind);
     error_kind is None, 'rate', or 'error'."""
-    last = ""; any_rate = False
+    errs = []; any_rate = False
     now = time.time()
     for m, prov in _TOOL_CHAIN:
         c = _client_for(prov)
         if c is None:
             continue
         if _cooldown.get((m, prov), 0) > now:
-            any_rate = True; continue
+            any_rate = True; errs.append(f"{prov}:cooldown"); continue
         try:
             r = c.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
                 tool_choice="auto", max_tokens=max_tokens, temperature=0.3, timeout=45)
             return r, None
         except Exception as e:
-            last = f"{type(e).__name__}: {e}"
+            errs.append(f"{prov}({m.split('/')[-1][:18]}): {type(e).__name__} {str(e)[:70]}")
             if _is_rate_limit(e):
                 any_rate = True; _cooldown[(m, prov)] = time.time() + 120
             continue
-    _last_tool_err["e"] = last[:400]
+    _last_tool_err["e"] = " | ".join(errs)[:600]
     return None, ("rate" if any_rate else "error")
 
 def _parse_text_tools(content):
