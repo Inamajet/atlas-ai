@@ -4,3 +4,4 @@ requests
 apscheduler
 openai
 beautifulsoup4
+Pillow
