@@ -831,6 +831,13 @@ AGENT_TOOLS = [
         }, "required": ["amount"]}
     }},
     {"type": "function", "function": {
+        "name": "close_app",
+        "description": "Close ONE running app on Mani's PC by name (e.g. 'notepad', 'chrome', 'spotify', 'epic', 'discord'). Returns whether it ACTUALLY closed. ALWAYS use this to close apps — never run_command. For several apps, call it once per app. Do NOT 'close everything' — only close apps Mani explicitly named.",
+        "parameters": {"type": "object", "properties": {
+            "app": {"type": "string", "description": "The app to close, e.g. 'notepad'"}
+        }, "required": ["app"]}
+    }},
+    {"type": "function", "function": {
         "name": "pc_open",
         "description": "Open an app, file, folder, or website on Mani's PC (e.g. 'chrome', 'notepad', 'C:/Users/Manit/Downloads', 'https://gmail.com'). Runs immediately.",
         "parameters": {"type": "object", "properties": {
@@ -985,6 +992,7 @@ _TOOL_FNS = {
     "pc_key":        lambda a: run_on_pc("hotkey", {"keys": a.get("key", "")}) if "+" in a.get("key", "")
                                 else run_on_pc("press_key", {"key": a.get("key", "")}),
     "pc_scroll":     lambda a: run_on_pc("scroll", {"amount": a.get("amount", 0)}),
+    "close_app":     lambda a: run_on_pc("close_app", {"app": a.get("app", "")}, timeout=20),
     "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
     "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
@@ -1015,10 +1023,13 @@ AGENT_INSTRUCTIONS = (
     "keys/shortcuts, pc_scroll to scroll; look again with see_screen to verify and correct a missed click. "
     "Shell commands and sending email need his approval on his machine — just call the tool, he'll "
     "approve or decline. Keep answers short. "
-    "CRITICAL HONESTY RULE: NEVER claim you opened, read, saw, sent, or changed anything unless a tool "
-    "call ACTUALLY returned success. Never invent emails, screen contents, or outcomes. If a tool says "
-    "the PC agent is offline / didn't respond, tell him plainly his PC agent (borfoli_agent.py) isn't "
-    "running so you can't reach his machine — don't pretend it worked. Report only what tools returned."
+    "To CLOSE an app, call close_app (it reports whether it truly closed) — NEVER run_command for closing, "
+    "and never 'close everything'; only close apps he explicitly named, one close_app call each. "
+    "CRITICAL HONESTY RULE — this is absolute: you did something ONLY if a tool call returned it. If you did "
+    "NOT call a tool, or the tool did not return explicit success, then it DID NOT HAPPEN — say so plainly. "
+    "NEVER write 'closed', 'opened', 'sent', 'done', or any success unless the matching tool's result said so. "
+    "Never invent emails, screen contents, files, or outcomes. Quote/paraphrase the tool result. If the agent "
+    "is offline or a tool failed, tell him exactly that — do NOT narrate an imagined success."
 )
 
 _last_tool_err = {"e": ""}
