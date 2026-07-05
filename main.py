@@ -1788,27 +1788,41 @@ function toggleTTS(){
   if(!ttsEnabled){speechSynthesis.cancel();if(ttsAudio)ttsAudio.pause();}
 }
 
-// ── Wake word — Hey-Google style: interim results, near-zero restart gap ──
-let wakeRecog=null,wakeOn=false,wakeArmed=false,_wakeBoot=false;
+// ── Wake word — Hey-Google style ──
+let wakeRecog=null,wakeOn=false,wakeArmed=false,_wakeBoot=false,_cmdTimer=null;
 const _wakeDbg=()=>document.getElementById('wake-dbg');
 function beep(f){try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f||880;g.gain.value=0.08;o.start();o.stop(a.currentTime+0.1);}catch(e){}}
+function wakeChime(){
+  // Two-tone rising chime — plays when wake word detected
+  try{
+    const a=new (window.AudioContext||window.webkitAudioContext)();
+    const tone=(f,t,dur)=>{const o=a.createOscillator(),g=a.createGain();o.type='sine';o.connect(g);g.connect(a.destination);o.frequency.value=f;g.gain.setValueAtTime(0.12,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);o.start(t);o.stop(t+dur+0.05);};
+    tone(660,a.currentTime,0.12);
+    tone(990,a.currentTime+0.11,0.18);
+  }catch(e){}
+}
 function wakeHit(w){
   w=(w||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
   if(!w)return false;
   if(/\bbor\b/.test(w))return true;
   if(w.includes('borfo')||w.includes('orfol')||w.includes('portfol')||w.includes('borph'))return true;
-  // Extended mishearing net: "for folly/fully", "por", "bar folly", phonetic near-misses
   if(/\bfor\s+fol|\bfor\s+ful|\bfore\s+fol/.test(w))return true;
   return /\b(borf\w*|boar?f\w*|bore|bored|board|boron|buffalo|before|boarding|boredom|forfe\w*|bourg\w*|bor[aeiou]\w*)\b/.test(w);
+}
+function _fireCmd(cmd,d){
+  if(!wakeArmed||!cmd)return;
+  clearTimeout(_cmdTimer);
+  beep(1200);wakeArmed=false;inp.value=cmd;send();
+  if(d)d.textContent='sent: "'+cmd+'"';
 }
 function _startWake(){
   if(!wakeOn||_wakeBoot)return;
   _wakeBoot=true;
-  const _bootGuard=setTimeout(()=>{_wakeBoot=false;},3000); // safety: clear if onstart never fires
+  const _bootGuard=setTimeout(()=>{_wakeBoot=false;},3000);
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   wakeRecog=new SR();
   wakeRecog.continuous=true;
-  wakeRecog.interimResults=true;   // process words AS spoken — like Hey Google
+  wakeRecog.interimResults=true;
   wakeRecog.lang='en-US';
   wakeRecog.maxAlternatives=3;
   wakeRecog.onstart=()=>{clearTimeout(_bootGuard);_wakeBoot=false;const d=_wakeDbg();if(d)d.textContent='👂 listening...';};
@@ -1830,21 +1844,31 @@ function _startWake(){
     }
     const heard=(final_.trim()||interim.trim());
     const text=heard.toLowerCase();
-    // Debug: show what Chrome actually hears so we can tune the pattern
     const d=_wakeDbg();if(d)d.textContent='heard: "'+heard+'"';
     if(!text)return;
     if(!wakeArmed){
       const words=text.split(/\s+/);
       const wi=words.findIndex(wakeHit);
       if(wi===-1)return;
-      beep(880);wakeArmed=true;if(d)d.textContent='✓ armed — say command';
-      // Command in same breath and final — send now
+      wakeChime();wakeArmed=true;if(d)d.textContent='✓ armed — say command';
       const after=words.slice(wi+1).filter(w=>!wakeHit(w)).join(' ').trim();
-      if(after&&final_.trim()){beep(1200);wakeArmed=false;inp.value=after;send();if(d)d.textContent='sent: "'+after+'"';return;}
-      setTimeout(()=>{wakeArmed=false;if(d&&d.textContent.includes('armed'))d.textContent='👂 listening...';},8000);
-    } else if(final_.trim()){
-      const cmd=final_.trim().split(/\s+/).filter(w=>!wakeHit(w)).join(' ').trim();
-      if(cmd){beep(1200);wakeArmed=false;inp.value=cmd;send();if(d)d.textContent='sent: "'+cmd+'"';}
+      if(after&&final_.trim()){_fireCmd(after,d);return;}
+      // Arm timeout: auto-disarm after 8s if no command
+      setTimeout(()=>{wakeArmed=false;clearTimeout(_cmdTimer);if(d&&d.textContent.includes('armed'))d.textContent='👂 listening...';},8000);
+    } else {
+      // Armed — collect command text
+      clearTimeout(_cmdTimer);
+      const src=final_.trim()||interim.trim();
+      const cmd=src.split(/\s+/).filter(w=>!wakeHit(w)).join(' ').trim();
+      if(!cmd)return;
+      if(final_.trim()){
+        // Chrome gave us a final result — send immediately
+        _fireCmd(cmd,d);
+      } else {
+        // Chrome only has interim — debounce 1.2s: send when speech pauses
+        // This fixes Chrome not firing isFinal with continuous:true
+        _cmdTimer=setTimeout(()=>_fireCmd(cmd,d),1200);
+      }
     }
   };
   try{wakeRecog.start();}catch(e){clearTimeout(_bootGuard);_wakeBoot=false;if(wakeOn)setTimeout(_startWake,500);}
@@ -1853,7 +1877,7 @@ function toggleWake(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Voice not supported.');return;}
   const d=_wakeDbg();
-  if(wakeOn){wakeOn=false;wakeArmed=false;_wakeBoot=false;try{wakeRecog&&wakeRecog.stop();}catch(e){}document.getElementById('wake-btn').classList.remove('active');if(d)d.textContent='';return;}
+  if(wakeOn){wakeOn=false;wakeArmed=false;_wakeBoot=false;clearTimeout(_cmdTimer);try{wakeRecog&&wakeRecog.stop();}catch(e){}document.getElementById('wake-btn').classList.remove('active');if(d)d.textContent='';return;}
   wakeOn=true;document.getElementById('wake-btn').classList.add('active');if(d)d.textContent='starting...';
   _startWake();
 }
