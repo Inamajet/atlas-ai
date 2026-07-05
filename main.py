@@ -1081,27 +1081,52 @@ def _tool_completion(msgs, max_tokens=900):
     _last_tool_err["e"] = " | ".join(errs)[:600]
     return None, ("rate" if any_rate else "error")
 
+def _balanced_json(text, start):
+    """First balanced {...} substring at/after `start`, else None (handles nested)."""
+    i = text.find('{', start)
+    if i < 0:
+        return None
+    depth = 0
+    for j in range(i, min(len(text), i + 4000)):
+        if text[j] == '{': depth += 1
+        elif text[j] == '}':
+            depth -= 1
+            if depth == 0:
+                return text[i:j+1]
+    return None
+
 def _parse_text_tools(content):
-    """Groq's llama models sometimes emit tool calls as TEXT (e.g.
-    <web_search>{"query":"x"}</web_search> or {"name":"web_search","arguments":{...}})
-    instead of native tool_calls. Extract them so the agent still works."""
+    """Robustly extract tool calls a model emitted as TEXT instead of native
+    tool_calls — handles <name>{json}, <function=name>{json}, name({json}),
+    {"name":..,"arguments":..}, and nested JSON. Only returns REAL tool names."""
     calls = []
     if not content:
         return calls
-    # form 1: <toolname>{json}</toolname>  or  <function=toolname>{json}
-    for m in re.finditer(r'<(?:function=)?([a-zA-Z_]+)>\s*(\{.*?\})', content, re.DOTALL):
-        name = m.group(1)
-        if name in _TOOL_FNS:
-            try: calls.append((name, json.loads(m.group(2))))
-            except Exception: calls.append((name, {}))
-    # form 2: {"name":"tool","arguments":{...}} / "parameters"
+    # Format A: {"name":"tool","arguments"/"parameters":{...}}
+    for m in re.finditer(r'"name"\s*:\s*"([a-zA-Z_]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*', content):
+        if m.group(1) in _TOOL_FNS:
+            js = _balanced_json(content, m.end())
+            if js is not None:
+                try: calls.append((m.group(1), json.loads(js)))
+                except Exception: pass
+    # Format B: any REAL tool name immediately followed by a JSON object
     if not calls:
-        for m in re.finditer(r'"name"\s*:\s*"([a-zA-Z_]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*(\{.*?\})', content, re.DOTALL):
-            name = m.group(1)
-            if name in _TOOL_FNS:
-                try: calls.append((name, json.loads(m.group(2))))
-                except Exception: calls.append((name, {}))
-    return calls
+        for name in _TOOL_FNS:
+            for m in re.finditer(r'\b' + re.escape(name) + r'\b', content):
+                if '{' not in content[m.end():m.end()+6]:   # must be name{...}, not a prose mention
+                    continue
+                js = _balanced_json(content, m.end())
+                if js is not None:
+                    try:
+                        calls.append((name, json.loads(js))); break
+                    except Exception:
+                        continue
+    seen, out = set(), []
+    for n, a in calls:
+        k = (n, json.dumps(a, sort_keys=True))
+        if k not in seen:
+            seen.add(k); out.append((n, a))
+    return out
 
 def agent_answer(msg, history, facts):
     """Native tool-calling agent (reliable, no confabulation). Uses _tool_completion's
@@ -1136,7 +1161,14 @@ def agent_answer(msg, history, facts):
                     "TOOL RESULTS (the only things that actually happened — report only these):\n" +
                     "\n\n".join(results) + "\n\nAnswer Mani in plain prose. No tool syntax."})
                 continue
-            return choice.content or "Done."
+            # Safety net: never leak raw tool-call syntax to Mani. Re-prompt for a clean answer.
+            raw = choice.content or ""
+            if re.search(r'<\s*/?\s*(?:function|tool)\b|"name"\s*:\s*"[a-z_]+"\s*,\s*"(?:arguments|parameters)"', raw, re.I):
+                msgs.append({"role": "user", "content":
+                    "That wasn't valid — either call a tool correctly or, if you're done, just answer Mani "
+                    "in plain prose with NO tool/function syntax."})
+                continue
+            return raw or "Done."
         msgs.append({"role": "assistant", "content": choice.content or "",
                      "tool_calls": [{"id": c.id, "type": "function",
                         "function": {"name": c.function.name, "arguments": c.function.arguments}}
