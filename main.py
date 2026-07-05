@@ -1,5 +1,5 @@
 import os, json, requests, threading, uuid, time, re, base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, Response
 from groq import Groq
 from openai import OpenAI
@@ -118,6 +118,7 @@ YOUR PERSONALITY:
 - Direct, sharp, zero fluff. Never pad. Never explain what he already knows.
 - Sound like a brilliant human advisor, not an AI assistant generating templates.
 - When he's casual, you're casual. When he needs deep analysis, go deep.
+- SITUATIONALLY AWARE like a real Jarvis: the [RIGHT NOW] line gives you the live time, day, and Frisco weather. Weave it in naturally — greet by time of day, factor the hour/weather into what you suggest, notice if it's late or early. Never recite the full timestamp robotically; reference it like a human would ("this late", "before your morning lift", "with that heat outside").
 - You already know everything about him. NEVER ask him to clarify who he is, what his goals are, or what he wants. Use the profile.
 - Do what he asks. If he wants to open something, watch something, or take a break — help, don't moralize. Do NOT refuse casual requests or lecture him about his goals/productivity. He is in charge; you are not his hall monitor.
 - Only bring up his goals/priorities if he explicitly asks "what should I focus on" — then answer directly (cybersec paper, SAT, physique, Mani OS).
@@ -129,6 +130,48 @@ FORMATTING RULES:
 - Casual question → casual answer, plain prose, no markdown.
 - Complex topic → structured only if genuinely needed.
 - Never pad. Be done when you're done."""
+
+# ── Live situational awareness (time + weather) — makes Borfoli feel like Jarvis ──
+def _now_central():
+    """US Central time with correct DST, no tz-data dependency (works on slim images)."""
+    u = datetime.utcnow()
+    y = u.year
+    mar = datetime(y, 3, 8);  dst_start = (mar + timedelta(days=(6 - mar.weekday()) % 7)).replace(hour=8)  # 2nd Sun Mar, 2am CST=8am UTC
+    nov = datetime(y, 11, 1); dst_end   = (nov + timedelta(days=(6 - nov.weekday()) % 7)).replace(hour=7)  # 1st Sun Nov, 2am CDT=7am UTC
+    return u + timedelta(hours=(-5 if dst_start <= u < dst_end else -6))
+
+_WMO = {0:"clear",1:"mostly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:"foggy",
+        51:"drizzle",53:"drizzle",55:"drizzle",61:"light rain",63:"rain",65:"heavy rain",
+        66:"freezing rain",67:"freezing rain",71:"light snow",73:"snow",75:"heavy snow",
+        77:"snow",80:"showers",81:"showers",82:"heavy showers",85:"snow showers",86:"snow showers",
+        95:"thunderstorms",96:"thunderstorms",99:"thunderstorms"}
+_weather_cache = {"t": 0, "text": ""}
+
+def _weather():
+    if time.time() - _weather_cache["t"] < 1800 and _weather_cache["text"]:
+        return _weather_cache["text"]
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast",
+            params={"latitude": 33.15, "longitude": -96.82, "current": "temperature_2m,weather_code",
+                    "temperature_unit": "fahrenheit", "timezone": "America/Chicago"}, timeout=8)
+        d = r.json()["current"]
+        txt = f"{round(d['temperature_2m'])}°F {_WMO.get(d['weather_code'], '')}".strip()
+        _weather_cache.update({"t": time.time(), "text": txt})
+        return txt
+    except Exception:
+        return _weather_cache["text"]
+
+def get_live_context():
+    n = _now_central()
+    h = n.hour
+    part = ("late night" if h < 5 else "early morning" if h < 8 else "morning" if h < 12
+            else "afternoon" if h < 17 else "evening" if h < 21 else "night")
+    clock = n.strftime("%I:%M %p").lstrip("0")
+    ctx = f"[RIGHT NOW] {n.strftime('%A')}, {n.strftime('%B')} {n.day}, {clock} ({part}) · Frisco, TX"
+    w = _weather()
+    if w:
+        ctx += f" · {w}"
+    return ctx
 
 def get_os_context():
     if not os_telemetry:
@@ -1352,6 +1395,8 @@ def chat():
     msg = data.get("message", "").strip()
     if not msg: return jsonify({"reply": "Say something."})
     facts, history = load_memory()
+    # Live situational awareness — Borfoli always knows the time, day, and weather.
+    facts = (get_live_context() + "\n\n" + facts).strip()
     # Ambient recall from his Obsidian notes — fold into `facts` BEFORE routing so
     # every path (fast, council, agent) sees relevant notes. Cheap (lexical, no API).
     vault_ctx = vault_context(msg)
@@ -1412,7 +1457,8 @@ def chat():
         _agent_until = time.time() + 150   # keep the next ~2.5min of follow-ups in-agent
 
     if intent == "chitchat":
-        msgs = [{"role": "system", "content": JARVIS_PROMPT}, {"role": "user", "content": msg}]
+        sys = JARVIS_PROMPT + ("\n\n" + facts if facts else "")
+        msgs = [{"role": "system", "content": sys}, {"role": "user", "content": msg}]
         reply = groq_chat(FAST_MODEL, msgs, max_tokens=300)
     elif intent in ("search", "browse", "agent"):
         # Agentic loop — real web browsing + dashboard control, chained
@@ -1509,6 +1555,21 @@ def vault_sync():
 def vault_status():
     return jsonify({"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]),
                     "method": VAULT_INDEX["method"], "updated": VAULT_INDEX["updated"]})
+
+@app.route("/greeting")
+def greeting():
+    """A proactive, situationally-aware greeting Borfoli says when Mani opens it —
+    like Jarvis booting up. Time + weather aware, optionally notes his active window."""
+    live = get_live_context()
+    os_ctx = get_os_context()
+    situ = f"\n{os_ctx}" if os_ctx else ""
+    prompt = (f"{JARVIS_PROMPT}\n\n{live}{situ}\n\n"
+              "Mani just opened you. Greet him ONCE, out loud, like Jarvis greeting Tony Stark on startup — "
+              "reference the time of day and the Frisco weather naturally, and if his desktop context is shown, "
+              "acknowledge what he's doing. 1-2 sharp sentences, warm but no fluff, no emojis, no markdown. "
+              "Do NOT end with a generic 'how can I help' — make it specific to this exact moment.")
+    reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110)
+    return jsonify({"greeting": reply, "context": live})
 
 # ── Code Execution ────────────────────────────────────────────────────────────
 
@@ -1860,7 +1921,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
       <div id="msgs">
         <div class="msg assistant">
           <div class="av assistant">B</div>
-          <div class="bubble">Online. What do you need?</div>
+          <div class="bubble" id="greet-bubble">Booting…</div>
         </div>
       </div>
       <div id="input-area">
@@ -2065,6 +2126,18 @@ async function loadTasks(){
   }catch(e){}
 }
 loadTasks();setInterval(loadTasks,15000);
+
+// ── Proactive greeting (Jarvis boot) ──────────────────────────
+async function greetOnLoad(){
+  const gb=document.getElementById('greet-bubble');
+  try{
+    const r=await fetch('/greeting');const d=await r.json();
+    const g=(d.greeting||'').trim()||'Online. What do you need?';
+    if(gb)gb.innerHTML=marked.parseInline?marked.parseInline(g):g;
+    if(typeof speak==='function')speak(g);
+  }catch(e){ if(gb)gb.textContent='Online. What do you need?'; }
+}
+greetOnLoad();
 
 // ── Chat ──────────────────────────────────────────────────────
 const INTENTS={chitchat:'CASUAL',fast:'FAST QUERY',search:'LIVE SEARCH',browse:'BROWSE',council:'COUNCIL · 6',task:'CREW TASK'};
