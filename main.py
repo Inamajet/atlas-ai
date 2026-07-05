@@ -132,13 +132,15 @@ FORMATTING RULES:
 - Never pad. Be done when you're done."""
 
 # ── Live situational awareness (time + weather) — makes Borfoli feel like Jarvis ──
+def _central_offset():
+    """Hours to add to UTC for US Central, DST-correct, no tz-data dependency."""
+    u = datetime.utcnow(); y = u.year
+    mar = datetime(y, 3, 8);  ds = (mar + timedelta(days=(6 - mar.weekday()) % 7)).replace(hour=8)   # 2nd Sun Mar
+    nov = datetime(y, 11, 1); de = (nov + timedelta(days=(6 - nov.weekday()) % 7)).replace(hour=7)   # 1st Sun Nov
+    return -5 if ds <= u < de else -6
+
 def _now_central():
-    """US Central time with correct DST, no tz-data dependency (works on slim images)."""
-    u = datetime.utcnow()
-    y = u.year
-    mar = datetime(y, 3, 8);  dst_start = (mar + timedelta(days=(6 - mar.weekday()) % 7)).replace(hour=8)  # 2nd Sun Mar, 2am CST=8am UTC
-    nov = datetime(y, 11, 1); dst_end   = (nov + timedelta(days=(6 - nov.weekday()) % 7)).replace(hour=7)  # 1st Sun Nov, 2am CDT=7am UTC
-    return u + timedelta(hours=(-5 if dst_start <= u < dst_end else -6))
+    return datetime.utcnow() + timedelta(hours=_central_offset())
 
 _WMO = {0:"clear",1:"mostly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:"foggy",
         51:"drizzle",53:"drizzle",55:"drizzle",61:"light rain",63:"rain",65:"heavy rain",
@@ -169,6 +171,45 @@ def _weather():
     except Exception as e:
         _weather_cache["err"] = f"{type(e).__name__}: {e}"[:200]
         return _weather_cache["text"]
+
+_wxf_cache = {"t": 0, "data": {}}
+
+def _weather_full():
+    """Rich Frisco weather for the HUD: temp, condition, humidity, wind, precip,
+    multi-period forecast, sunrise/sunset. All keyless (NWS + sunrise-sunset.org)."""
+    if time.time() - _wxf_cache["t"] < 1200 and _wxf_cache["data"]:
+        return _wxf_cache["data"]
+    d = {}
+    try:
+        if not _wx_grid.get("hourly"):
+            pr = requests.get("https://api.weather.gov/points/33.15,-96.82", headers=_WX_UA, timeout=12).json()["properties"]
+            _wx_grid["hourly"] = pr["forecastHourly"]; _wx_grid["daily"] = pr["forecast"]
+        h = requests.get(_wx_grid["hourly"], headers=_WX_UA, timeout=12).json()["properties"]["periods"][0]
+        d["temp"] = h["temperature"]; d["unit"] = h.get("temperatureUnit", "F")
+        d["cond"] = h.get("shortForecast", "")
+        d["humidity"] = (h.get("relativeHumidity") or {}).get("value")
+        d["wind"] = f"{h.get('windSpeed','')} {h.get('windDirection','')}".strip()
+        d["precip"] = (h.get("probabilityOfPrecipitation") or {}).get("value") or 0
+        try:
+            per = requests.get(_wx_grid["daily"], headers=_WX_UA, timeout=12).json()["properties"]["periods"]
+            d["forecast"] = [{"name": x["name"], "temp": x["temperature"], "unit": x.get("temperatureUnit", "F"),
+                              "cond": x.get("shortForecast", ""), "day": x.get("isDaytime", True)} for x in per[:4]]
+        except Exception:
+            d["forecast"] = []
+        try:
+            s = requests.get("https://api.sunrise-sunset.org/json",
+                             params={"lat": 33.15, "lng": -96.82, "formatted": 0}, timeout=10).json()["results"]
+            off = _central_offset()
+            def _ct(iso):
+                t = datetime.fromisoformat(iso.replace("+00:00", "")) + timedelta(hours=off)
+                return t.strftime("%I:%M %p").lstrip("0")
+            d["sunrise"] = _ct(s["sunrise"]); d["sunset"] = _ct(s["sunset"])
+        except Exception:
+            pass
+        _wxf_cache.update({"t": time.time(), "data": d})
+    except Exception as e:
+        d["err"] = f"{type(e).__name__}: {e}"[:120]
+    return _wxf_cache["data"] or d
 
 def get_live_context():
     # Always Texas time — Mani's in Frisco (Central), regardless of his PC's clock.
@@ -1319,6 +1360,41 @@ def os_status_route():
             result[k] = os_telemetry[k]
     return jsonify(result)
 
+@app.route("/system")
+def system_status():
+    """One live feed for the HUD — real data only (no fabricated numbers)."""
+    n = _now_central(); h = n.hour
+    part = ("late night" if h < 5 else "early morning" if h < 8 else "morning" if h < 12
+            else "afternoon" if h < 17 else "evening" if h < 21 else "night")
+    active = [{"model": m, "provider": p} for m, p in MEGA_CHAIN if _client_for(p) is not None]
+    agent = {"online": False}
+    if os_telemetry and time.time() - os_telemetry.get("received_at", 0) < 90:
+        agent = {"online": True, "cpu": os_telemetry.get("cpu"), "ram": os_telemetry.get("ram"),
+                 "disk": os_telemetry.get("disk"), "active_window": os_telemetry.get("active_window"),
+                 "uptime_hours": os_telemetry.get("uptime_hours"),
+                 "top": [p.get("name") for p in (os_telemetry.get("top_processes") or [])[:3]]}
+    mani_online = False
+    try:
+        st, err = mani_os_get()
+        mani_online = (not err) and bool(st)
+    except Exception:
+        pass
+    return jsonify({
+        "time": {"day": n.strftime("%A"), "date": f"{n.strftime('%B')} {n.day}",
+                 "clock": n.strftime("%I:%M %p").lstrip("0"), "hms": n.strftime("%H:%M:%S"),
+                 "part": part, "location": "Frisco, TX"},
+        "weather": _weather_full(),
+        "brains": {"active": len(active), "primary": (active[0]["model"] if active else FAST_MODEL),
+                   "nvidia": nv_client is not None, "claude": claude_client is not None,
+                   "vision": "Groq Llama-4 Scout", "list": active},
+        "agent": agent,
+        "mani_os": {"online": mani_online},
+        "vault": {"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]), "method": VAULT_INDEX["method"]},
+        "identity": {"tagline": "BORN FROM LIGHT",
+                     "archetypes": ["NIGHTWING", "DANTE", "GAROU"],
+                     "directives": ["arXiv CYBERSEC PAPER", "SAT 1500+", "14% BF CUT", "MANI OS"]},
+    })
+
 # ── Chat Routes ───────────────────────────────────────────────────────────────
 
 # ── PC control bridge ──────────────────────────────────────────────────────────
@@ -1907,6 +1983,49 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
 .bubble{transition:box-shadow 0.3s;}
 .msg.assistant:hover .bubble{box-shadow:0 6px 30px rgba(0,0,0,0.4),inset 0 1px 0 rgba(0,212,255,0.12);}
 
+/* ── ARC-REACTOR CORE + HUD/CHAT TOGGLE ──────────────────────── */
+#hud-core{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;pointer-events:none;z-index:3;transition:opacity .4s,transform .4s;text-align:center;}
+#hud-core>*{pointer-events:auto;}
+#hc-clock{font-family:var(--ui);font-size:min(6.4vw,60px);font-weight:700;color:var(--text-bright);
+  letter-spacing:0.05em;text-shadow:0 0 34px rgba(0,212,255,0.55),0 0 8px rgba(0,212,255,0.4);line-height:1;font-variant-numeric:tabular-nums;}
+#hc-sub{font-family:var(--mono);font-size:11px;letter-spacing:0.26em;color:var(--primary);text-transform:uppercase;margin-top:7px;}
+#hc-temp{font-family:var(--ui);font-size:19px;font-weight:600;color:var(--text-bright);margin-top:12px;letter-spacing:0.03em;}
+#hc-loc{font-family:var(--mono);font-size:9px;letter-spacing:0.32em;color:var(--text-muted);margin-top:3px;}
+#hc-tag{font-family:var(--mono);font-size:8px;letter-spacing:0.42em;color:rgba(0,212,255,0.45);margin-top:16px;}
+#hc-comms{margin-top:16px;background:var(--primary-dim);border:1px solid var(--border-hi);color:var(--primary);
+  font-family:var(--mono);font-size:9px;letter-spacing:0.24em;padding:7px 20px;border-radius:3px;cursor:pointer;transition:all .18s;}
+#hc-comms:hover{background:rgba(0,212,255,0.14);box-shadow:0 0 22px rgba(0,212,255,0.3);transform:translateY(-1px);}
+#hud-back{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(0,10,24,0.9);border:1px solid var(--border-hi);
+  color:var(--primary);font-family:var(--mono);font-size:9px;letter-spacing:0.2em;padding:6px 15px;border-radius:3px;cursor:pointer;z-index:6;display:none;}
+#hud-back:hover{background:var(--primary-dim);box-shadow:0 0 16px rgba(0,212,255,0.25);}
+#msgs{opacity:0;pointer-events:none;transition:opacity .35s;}
+body.chatting #hud-core{opacity:0;transform:scale(0.9);pointer-events:none;}
+body.chatting #msgs{opacity:1;pointer-events:auto;}
+body.chatting #hud-back{display:block;}
+#input-area{z-index:5;position:relative;}
+
+/* ── WEATHER MODULE ──────────────────────────────────────────── */
+#wx-main{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;}
+#wx-temp{font-family:var(--ui);font-size:32px;font-weight:700;color:var(--text-bright);text-shadow:0 0 18px rgba(0,212,255,0.4);line-height:1;}
+#wx-cond{font-family:var(--mono);font-size:8.5px;color:var(--primary);letter-spacing:0.06em;text-transform:uppercase;}
+#wx-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+.wx-cell{display:flex;flex-direction:column;gap:2px;padding:5px 7px;border:1px solid var(--border);border-radius:2px;background:var(--primary-dim);}
+.wx-k{font-family:var(--mono);font-size:6.5px;letter-spacing:0.14em;color:var(--text-muted);}
+.wx-v{font-family:var(--mono);font-size:9px;color:var(--text-bright);}
+#wx-fc{display:flex;gap:4px;margin-top:8px;}
+.fc{flex:1;text-align:center;padding:4px 2px;border:1px solid var(--border);border-radius:2px;}
+.fc-n{font-family:var(--mono);font-size:6px;color:var(--text-muted);letter-spacing:0.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.fc-t{font-family:var(--mono);font-size:11px;color:var(--primary);margin-top:1px;}
+/* identity / operator */
+.id-row{display:flex;justify-content:space-between;align-items:center;}
+.id-k{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:0.12em;}
+.id-v{font-family:var(--ui);font-size:11px;color:var(--text-bright);letter-spacing:0.1em;font-weight:700;}
+.id-arch{font-family:var(--mono);font-size:8px;color:var(--primary);letter-spacing:0.1em;margin-top:7px;line-height:1.5;text-shadow:0 0 10px rgba(0,212,255,0.3);}
+.id-dir{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:0.05em;margin-top:6px;line-height:1.7;}
+.brain-stat{display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:0.08em;}
+#brain-flags{color:var(--green);}
+
 /* ── MOBILE PANEL TOGGLES (hidden on desktop) ─────────────────── */
 .mtoggle{display:none;align-items:center;justify-content:center;width:36px;height:36px;background:transparent;border:1px solid var(--border);border-radius:9px;color:var(--primary);font-size:16px;cursor:pointer;flex-shrink:0;transition:all 0.15s;}
 .mtoggle:hover,.mtoggle.active{border-color:var(--primary);background:var(--primary-dim);box-shadow:0 0 14px rgba(0,212,255,0.25);}
@@ -1987,15 +2106,31 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
       <div class="aw-doc" id="aw-doc">run borfoli_agent.py to connect</div>
     </div>
     <div class="sec">
-      <div class="sec-lbl">PRIMARY MODEL</div>
+      <div class="sec-lbl">NEURAL CORE</div>
       <div id="mdl-list"></div>
+      <div class="brain-stat"><span id="brain-count">— brains</span><span id="brain-flags"></span></div>
+    </div>
+    <div class="sec">
+      <div class="sec-lbl">OPERATOR</div>
+      <div class="id-row"><span class="id-k">CALLSIGN</span><span class="id-v">MANI</span></div>
+      <div class="id-arch" id="id-arch">NIGHTWING · DANTE · GAROU</div>
+      <div class="id-dir" id="id-dir"></div>
     </div>
   </div>
 
   <!-- CENTER -->
   <div id="center">
     <canvas id="cv"></canvas>
+    <div id="hud-core">
+      <div id="hc-clock">00:00:00</div>
+      <div id="hc-sub"><span id="hc-day">—</span> · <span id="hc-part">standby</span></div>
+      <div id="hc-temp">—</div>
+      <div id="hc-loc">FRISCO · TX</div>
+      <div id="hc-tag">BORN FROM LIGHT</div>
+      <button id="hc-comms" onclick="setChat(true)">◈ COMMS</button>
+    </div>
     <div id="chat-layer">
+      <button id="hud-back" onclick="setChat(false)" title="Back to HUD">⌂ HUD</button>
       <div id="msgs">
         <div class="msg assistant">
           <div class="av assistant">B</div>
@@ -2024,6 +2159,19 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
   <!-- RIGHT PANEL -->
   <div id="rpanel" class="spanel">
     <div class="sec">
+      <div class="sec-lbl">WEATHER · FRISCO</div>
+      <div id="wx">
+        <div id="wx-main"><span id="wx-temp">--°</span><span id="wx-cond">—</span></div>
+        <div id="wx-grid">
+          <div class="wx-cell"><span class="wx-k">HUMIDITY</span><span class="wx-v" id="wx-hum">—</span></div>
+          <div class="wx-cell"><span class="wx-k">WIND</span><span class="wx-v" id="wx-wind">—</span></div>
+          <div class="wx-cell"><span class="wx-k">PRECIP</span><span class="wx-v" id="wx-precip">—</span></div>
+          <div class="wx-cell"><span class="wx-k">SUN</span><span class="wx-v" id="wx-sun">—</span></div>
+        </div>
+        <div id="wx-fc"></div>
+      </div>
+    </div>
+    <div class="sec">
       <div class="sec-lbl">COUNCIL</div>
       <div id="council-list"></div>
     </div>
@@ -2047,14 +2195,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
 // ── Clock ──────────────────────────────────────────────────────
 const DAYS=['SUN','MON','TUE','WED','THU','FRI','SAT'];
 const MONTHS=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const DAYNM=['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
 function tick(){
   // Always show Texas (Central) time — matches Borfoli's awareness, regardless of PC timezone.
   const n=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
   const p=x=>String(x).padStart(2,'0');
-  document.getElementById('clock-disp').textContent=p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
+  const hms=p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
+  document.getElementById('clock-disp').textContent=hms;
   document.getElementById('date-disp').textContent=DAYS[n.getDay()]+' '+p(n.getDate())+' '+MONTHS[n.getMonth()]+' CT';
+  const S=(id,t)=>{const e=document.getElementById(id);if(e)e.textContent=t;};
+  S('hc-clock',hms);
+  S('hc-day',DAYNM[n.getDay()]+' · '+MONTHS[n.getMonth()]+' '+n.getDate());
+  const h=n.getHours();
+  S('hc-part',h<5?'LATE NIGHT':h<8?'EARLY MORNING':h<12?'MORNING':h<17?'AFTERNOON':h<21?'EVENING':'NIGHT');
 }
 tick();setInterval(tick,1000);
+
+// ── HUD ⟷ Chat mode ───────────────────────────────────────────
+function setChat(on){document.body.classList.toggle('chatting',on);if(on)setTimeout(()=>{try{inp.focus();}catch(e){}},60);}
 
 // ── Mobile panel toggles ───────────────────────────────────────
 function togglePanel(id){
@@ -2078,73 +2236,70 @@ function closePanels(){
 // ── Orb ───────────────────────────────────────────────────────
 const CV=document.getElementById('cv'),CTX=CV.getContext('2d');
 let OW,OH,orbActive=false,orbEnergy=0,orbTime=0;
-const rings=[{ph:0,tilt:0.4,spd:0.007},{ph:2.1,tilt:1.15,spd:-0.005},{ph:4.2,tilt:2.5,spd:0.009}];
-const pts=Array.from({length:80},()=>({a:Math.random()*Math.PI*2,r:Math.random()*110+45,spd:(Math.random()-.5)*0.022,al:Math.random(),sz:Math.random()*1.4+0.5}));
+let hudCPU=0,hudRAM=0,hudDISK=0;   // live metrics drive the data arcs
+const pts=Array.from({length:60},()=>({a:Math.random()*Math.PI*2,r:Math.random()*0.5+0.35,spd:(Math.random()-.5)*0.02,al:Math.random(),sz:Math.random()*1.3+0.4}));
 
 function rszOrb(){OW=CV.width=CV.offsetWidth;OH=CV.height=CV.offsetHeight;}
 rszOrb();window.addEventListener('resize',rszOrb);
 
+function _a(cx,cy,r,a0,a1,w,col,glow){CTX.beginPath();CTX.arc(cx,cy,r,a0,a1);CTX.strokeStyle=col;CTX.lineWidth=w;CTX.shadowBlur=glow||0;CTX.shadowColor=col;CTX.stroke();CTX.shadowBlur=0;}
+
 function drawOrb(){
   CTX.clearRect(0,0,OW,OH);
-  const cx=OW/2,cy=OH/2,R=Math.min(OW,OH)*0.22;
-  orbEnergy=orbActive?Math.min(orbEnergy+0.04,1):Math.max(orbEnergy-0.025,0);
-  const [r,g,b]=orbActive?[255,136,0]:[0,212,255];
-  const col=`rgba(${r},${g},${b}`;
+  const cx=OW/2,cy=OH/2,R=Math.min(OW,OH)*0.44;
+  orbEnergy=orbActive?Math.min(orbEnergy+0.04,1):Math.max(orbEnergy-0.02,0);
+  const A=orbActive?[255,136,0]:[0,212,255];
+  const c=a=>`rgba(${A[0]},${A[1]},${A[2]},${a})`;
+  const spin=1+orbEnergy*2.6;
 
-  // ambient glow
-  const gr=CTX.createRadialGradient(cx,cy,0,cx,cy,R*1.9);
-  gr.addColorStop(0,`${col},${0.07+orbEnergy*0.13})`);
-  gr.addColorStop(0.5,`${col},${0.025+orbEnergy*0.06})`);
-  gr.addColorStop(1,`${col},0)`);
-  CTX.fillStyle=gr;CTX.beginPath();CTX.arc(cx,cy,R*1.9,0,Math.PI*2);CTX.fill();
+  // ambient core glow
+  const gr=CTX.createRadialGradient(cx,cy,0,cx,cy,R);
+  gr.addColorStop(0,c(0.05+orbEnergy*0.12));gr.addColorStop(0.55,c(0.018));gr.addColorStop(1,c(0));
+  CTX.fillStyle=gr;CTX.beginPath();CTX.arc(cx,cy,R,0,7);CTX.fill();
 
-  // outer dashed ring
-  CTX.setLineDash([4,8]);
-  CTX.strokeStyle=`${col},${0.08+orbEnergy*0.12})`;
-  CTX.lineWidth=0.5;
-  CTX.beginPath();CTX.arc(cx,cy,R*1.18,0,Math.PI*2);CTX.stroke();
+  // outer tick ring (60 ticks, long every 5)
+  for(let i=0;i<60;i++){
+    const a=i/60*Math.PI*2 - orbTime*0.02, long=i%5===0;
+    const r0=R*0.98,r1=R*(long?0.90:0.935);
+    CTX.beginPath();CTX.moveTo(cx+r0*Math.cos(a),cy+r0*Math.sin(a));CTX.lineTo(cx+r1*Math.cos(a),cy+r1*Math.sin(a));
+    CTX.strokeStyle=c(long?0.5:0.18);CTX.lineWidth=long?1.3:0.6;CTX.stroke();
+  }
+  _a(cx,cy,R*0.99,0,7,1,c(0.22));
+
+  // rotating segmented ring
+  CTX.save();CTX.translate(cx,cy);CTX.rotate(orbTime*0.06*spin);
+  for(let i=0;i<8;i++){const a=i/8*Math.PI*2;_a(0,0,R*0.83,a+0.06,a+0.62,3,c(0.3+orbEnergy*0.45),6+orbEnergy*14);}
+  CTX.restore();
+
+  // live data arcs — CPU / RAM / DISK (3/4 sweep from top)
+  [[hudCPU,0.73],[hudRAM,0.67],[hudDISK,0.61]].forEach(([v,rr])=>{
+    const r=R*rr,s=-Math.PI/2,span=Math.PI*1.5;
+    _a(cx,cy,r,s,s+span,2,c(0.08));
+    _a(cx,cy,r,s,s+span*Math.max(0,Math.min(1,(v||0)/100)),2.4,c(0.55+orbEnergy*0.4),7+orbEnergy*12);
+  });
+
+  // counter-rotating dashed rings
+  CTX.setLineDash([2,10]);CTX.save();CTX.translate(cx,cy);CTX.rotate(-orbTime*0.09*spin);_a(0,0,R*0.50,0,7,1,c(0.4));CTX.restore();
+  CTX.setLineDash([7,15]);CTX.save();CTX.translate(cx,cy);CTX.rotate(orbTime*0.13*spin);_a(0,0,R*0.44,0,7,1.3,c(0.5));CTX.restore();
   CTX.setLineDash([]);
 
-  // rotating ellipses
-  rings.forEach((ring,i)=>{
-    ring.ph+=ring.spd*(1+orbEnergy*3.5);
-    CTX.save();CTX.translate(cx,cy);CTX.rotate(ring.ph);
-    CTX.beginPath();CTX.ellipse(0,0,R*0.9,R*0.29,ring.tilt,0,Math.PI*2);
-    CTX.strokeStyle=`${col},${0.22+orbEnergy*0.5})`;
-    CTX.lineWidth=0.9+orbEnergy*0.7;
-    CTX.shadowBlur=6+orbEnergy*22;
-    CTX.shadowColor=orbActive?'#ff8800':'#00d4ff';
-    CTX.stroke();
-    // orbital node
-    const nx=R*0.9*Math.cos(ring.ph*2.5+i),ny=R*0.29*Math.sin(ring.ph*2.5+i);
-    CTX.fillStyle=`${col},${0.55+orbEnergy*0.45})`;
-    CTX.shadowBlur=10+orbEnergy*18;
-    CTX.beginPath();CTX.arc(nx,ny,2+orbEnergy*1.8,0,Math.PI*2);CTX.fill();
-    CTX.shadowBlur=0;CTX.restore();
-  });
+  // scanner sweep
+  CTX.save();CTX.translate(cx,cy);CTX.rotate(orbTime*0.5*spin);
+  const sg2=CTX.createLinearGradient(0,0,R*0.5,0);sg2.addColorStop(0,c(0));sg2.addColorStop(1,c(0.22+orbEnergy*0.35));
+  CTX.strokeStyle=sg2;CTX.lineWidth=2;CTX.beginPath();CTX.moveTo(0,0);CTX.lineTo(R*0.5,0);CTX.stroke();CTX.restore();
 
-  // center sphere
-  const pulse=Math.sin(orbTime*2.8)*0.5+0.5;
-  const sr=R*(0.095+pulse*0.022+orbEnergy*0.04);
-  const sg=CTX.createRadialGradient(cx,cy,0,cx,cy,sr);
-  sg.addColorStop(0,`${col},1)`);
-  sg.addColorStop(0.55,`${col},0.55)`);
-  sg.addColorStop(1,`${col},0)`);
-  CTX.shadowBlur=22+orbEnergy*45;
-  CTX.shadowColor=orbActive?'#ff8800':'#00d4ff';
-  CTX.fillStyle=sg;CTX.beginPath();CTX.arc(cx,cy,sr,0,Math.PI*2);CTX.fill();
-  CTX.shadowBlur=0;
+  // drifting particles
+  pts.forEach(p=>{p.a+=p.spd*(1+orbEnergy*2);const px=cx+R*p.r*Math.cos(p.a),py=cy+R*p.r*Math.sin(p.a)*0.9;
+    CTX.fillStyle=c(p.al*(0.08+orbEnergy*0.4));CTX.beginPath();CTX.arc(px,py,p.sz,0,7);CTX.fill();});
 
-  // particles
-  pts.forEach(p=>{
-    p.a+=p.spd*(1+orbEnergy*2.2);
-    const px=cx+p.r*Math.cos(p.a),py=cy+p.r*Math.sin(p.a)*0.44;
-    CTX.fillStyle=`${col},${p.al*(0.1+orbEnergy*0.5)})`;
-    CTX.beginPath();CTX.arc(px,py,p.sz,0,Math.PI*2);CTX.fill();
-  });
+  // inner core disc (clock HTML overlays this)
+  const pulse=Math.sin(orbTime*2.5)*0.5+0.5,cr=R*0.30;
+  const cg=CTX.createRadialGradient(cx,cy,0,cx,cy,cr);
+  cg.addColorStop(0,c(0.26+pulse*0.10+orbEnergy*0.2));cg.addColorStop(0.7,c(0.05));cg.addColorStop(1,c(0));
+  CTX.fillStyle=cg;CTX.beginPath();CTX.arc(cx,cy,cr,0,7);CTX.fill();
+  _a(cx,cy,cr,0,7,1,c(0.3+orbEnergy*0.4),9+orbEnergy*15);
 
-  orbTime+=0.016;
-  requestAnimationFrame(drawOrb);
+  orbTime+=0.016;requestAnimationFrame(drawOrb);
 }
 drawOrb();
 function setActive(on){orbActive=on;}
@@ -2205,6 +2360,30 @@ async function loadTasks(){
   }catch(e){}
 }
 loadTasks();setInterval(loadTasks,15000);
+
+// ── System feed (weather · brains · identity · core) ──────────
+async function loadSystem(){
+  try{
+    const r=await fetch('/system'),d=await r.json();
+    const S=(id,t)=>{const e=document.getElementById(id);if(e&&t!=null)e.textContent=t;};
+    const w=d.weather||{};
+    if(w.temp!=null){S('hc-temp',w.temp+'°'+(w.unit||'F')+(w.cond?'  ·  '+w.cond:''));S('wx-temp',w.temp+'°');}
+    S('wx-cond',w.cond||'—');
+    S('wx-hum',w.humidity!=null?w.humidity+'%':'—');
+    S('wx-wind',w.wind||'—');
+    S('wx-precip',(w.precip!=null?w.precip:0)+'%');
+    S('wx-sun',(w.sunrise&&w.sunset)?('↑ '+w.sunrise+'   ↓ '+w.sunset):'—');
+    const fc=document.getElementById('wx-fc');
+    if(fc&&w.forecast&&w.forecast.length){fc.innerHTML='';w.forecast.slice(0,4).forEach(f=>{const e=document.createElement('div');e.className='fc';e.innerHTML='<div class="fc-n">'+(f.name||'').slice(0,11)+'</div><div class="fc-t">'+f.temp+'°</div>';fc.appendChild(e);});}
+    const b=d.brains||{};
+    S('brain-count',(b.active||0)+' BRAINS LIVE');
+    S('brain-flags',(b.claude?'CLAUDE':(b.nvidia?'NVIDIA':'GROQ')));
+    if(d.identity){S('id-arch',(d.identity.archetypes||[]).join(' · '));S('id-dir',(d.identity.directives||[]).join('  ·  '));}
+    const a=d.agent||{};
+    hudCPU=a.online?(a.cpu||0):0;hudRAM=a.online?(a.ram||0):0;hudDISK=a.online?(a.disk||0):0;
+  }catch(e){}
+}
+loadSystem();setInterval(loadSystem,30000);
 
 // ── Proactive greeting (Jarvis boot) ──────────────────────────
 async function greetOnLoad(){
@@ -2428,6 +2607,7 @@ function toggleWake(){
 async function send(){
   const msg=inp.value.trim();
   if(!msg&&!pendingImg)return;
+  setChat(true);
   if(pendingImg){
     const img=pendingImg,pm=msg||'What do you see?';
     clearImg();inp.value='';addMsg('user',pm+' [image]');setActive(true);
