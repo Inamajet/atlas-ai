@@ -37,6 +37,12 @@ nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDI
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
+# Google Gemini direct API (OpenAI-compatible). Separate, generous free quota
+# (~1500/day) vs OpenRouter's tiny free-vision limits — this is Borfoli's real eyes.
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+gemini_client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                       api_key=GEMINI_KEY) if GEMINI_KEY else None
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TAVILY_KEY = os.environ.get("TAVILY_KEY")
@@ -773,8 +779,8 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _cooldown = {}   # (model, provider) -> epoch when usable again
 
 def _client_for(provider):
-    return {"groq": client, "openrouter": or_client,
-            "nvidia": nv_client, "anthropic": claude_client}.get(provider)
+    return {"groq": client, "openrouter": or_client, "nvidia": nv_client,
+            "anthropic": claude_client, "google": gemini_client}.get(provider)
 
 def _guess_provider(model):
     if claude_client and model.startswith("claude"): return "anthropic"
@@ -829,8 +835,9 @@ def groq_chat(model, messages, max_tokens=1024):
 # Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
 # old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
 VISION_CHAIN = [
-    ("google/gemini-2.0-flash-exp:free",              "openrouter"),  # strong, accurate coords
-    ("meta-llama/llama-3.2-90b-vision-instruct:free", "openrouter"),
+    ("gemini-2.0-flash",                              "google"),      # direct Google API, big free quota
+    ("gemini-2.5-flash",                              "google"),
+    ("google/gemini-2.0-flash-exp:free",              "openrouter"),  # OpenRouter fallback (small limit)
     ("meta-llama/llama-3.2-11b-vision-instruct:free", "openrouter"),
 ]
 
