@@ -1507,7 +1507,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
           <input type="file" id="img-in" accept="image/*" style="display:none" onchange="handleImg(event)">
           <button id="sbtn" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
-        <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "Borfoli") · 🔊 TTS
+        <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "light") · 🔊 TTS
           <select id="voice-sel" title="Pick Borfoli's voice (Edge has the realistic ones)"></select>
           <span id="wake-dbg" style="color:#888;font-size:10px;margin-left:6px;font-style:italic"></span>
         </div>
@@ -1802,16 +1802,9 @@ function wakeChime(){
   }catch(e){}
 }
 function wakeHit(w){
-  // Only match multi-syllable phonetics of "borfoli" — avoids false positives from "bor"/"bore"/"bored"
-  w=(w||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
+  w=(w||'').toLowerCase().replace(/[^a-z]/g,'').trim();
   if(!w)return false;
-  // Exact or near-exact
-  if(w.includes('borfo')||w.includes('orfoli')||w.includes('portfol')||w.includes('borph'))return true;
-  // Phonetic mishearings of "borfoli" as two words
-  if(/\bfor\s+fol|\bfor\s+ful|\bfore\s+fol|\bborn\s+fol/.test(w))return true;
-  // "born from light" — what borfoli stands for
-  if(w.includes('born from light')||w.includes('born from li'))return true;
-  return false;
+  return w==='light'; // single clean word, no ambiguous multi-syllable patterns
 }
 function _fireCmd(cmd,d){
   if(!wakeArmed||!cmd)return;
@@ -1907,6 +1900,12 @@ async function send(){
     const d=await res.json();setActive(false);addMsg('assistant',d.reply);speak(d.reply);
     if(d.intent){const tg=document.getElementById('intent-tag');tg.textContent=INTENTS[d.intent]||d.intent.toUpperCase();tg.classList.add('on');setTimeout(()=>tg.classList.remove('on'),4000);}
     if(d.intent==='task')loadTasks();
+    // Auto-re-arm after reply so convo flows naturally — no wake word needed for follow-ups
+    if(wakeOn&&!wakeArmed){
+      wakeArmed=true;
+      const wd=_wakeDbg();if(wd)wd.textContent='💬 follow-up ready...';
+      setTimeout(()=>{if(wakeArmed){wakeArmed=false;const wd=_wakeDbg();if(wd)wd.textContent='👂 listening...';}},20000);
+    }
   }catch(e){setActive(false);addMsg('assistant','[Connection error]');}
 }
 
