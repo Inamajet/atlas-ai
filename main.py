@@ -1,6 +1,6 @@
 import os, json, requests, threading, uuid, time, re, base64
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, redirect
 from groq import Groq
 from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,9 +18,23 @@ def require_auth():
         return
     if request.path.startswith('/mani-os/'):
         return  # Mani OS sync endpoints are CORS-open (no AI access, just fitness data)
+    # One-app seamless login: ?key= or a cookie set by /login lets the desktop app
+    # window open without a basic-auth prompt.
+    if request.args.get('key') == APP_PASSWORD:
+        return
+    if request.cookies.get('bfauth') == APP_PASSWORD:
+        return
     auth = request.authorization
     if not auth or auth.password != APP_PASSWORD:
         return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Borfoli"'})
+
+@app.route("/login")
+def login():
+    if request.args.get("key") != APP_PASSWORD:
+        return Response("bad key", 401)
+    resp = redirect("/")
+    resp.set_cookie("bfauth", APP_PASSWORD, max_age=31536000, httponly=True, samesite="Lax", secure=True)
+    return resp
 
 # 20s default timeout on EVERY client so one stalled provider can't hang a whole
 # request — the waterfall fails over instead of blocking. Per-call timeouts (vision,
