@@ -1509,6 +1509,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
         </div>
         <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "Bor") · 🔊 TTS
           <select id="voice-sel" title="Pick Borfoli's voice (Edge has the realistic ones)"></select>
+          <span id="wake-dbg" style="color:#888;font-size:10px;margin-left:6px;font-style:italic"></span>
         </div>
       </div>
     </div>
@@ -1788,67 +1789,72 @@ function toggleTTS(){
 }
 
 // ── Wake word — Hey-Google style: interim results, near-zero restart gap ──
-// interimResults:true means words are checked AS they're spoken, not after silence.
-// Say "Borfoli" alone → beep → next utterance is the command.
-// Say "Borfoli open YouTube" in one breath → sends immediately.
 let wakeRecog=null,wakeOn=false,wakeArmed=false,_wakeBoot=false;
+const _wakeDbg=()=>document.getElementById('wake-dbg');
 function beep(f){try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f||880;g.gain.value=0.08;o.start();o.stop(a.currentTime+0.1);}catch(e){}}
 function wakeHit(w){
   w=(w||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
   if(!w)return false;
   if(/\bbor\b/.test(w))return true;
   if(w.includes('borfo')||w.includes('orfol')||w.includes('portfol')||w.includes('borph'))return true;
-  return /\b(borf\w*|boar?f\w*|bore|bored|board|boron|buffalo|before|boarding|boredom|forfe\w*)\b/.test(w);
+  // Extended mishearing net: "for folly/fully", "por", "bar folly", phonetic near-misses
+  if(/\bfor\s+fol|\bfor\s+ful|\bfore\s+fol/.test(w))return true;
+  return /\b(borf\w*|boar?f\w*|bore|bored|board|boron|buffalo|before|boarding|boredom|forfe\w*|bourg\w*|bor[aeiou]\w*)\b/.test(w);
 }
 function _startWake(){
   if(!wakeOn||_wakeBoot)return;
   _wakeBoot=true;
+  const _bootGuard=setTimeout(()=>{_wakeBoot=false;},3000); // safety: clear if onstart never fires
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   wakeRecog=new SR();
   wakeRecog.continuous=true;
-  wakeRecog.interimResults=true;   // process words AS spoken — this is the fix
+  wakeRecog.interimResults=true;   // process words AS spoken — like Hey Google
   wakeRecog.lang='en-US';
   wakeRecog.maxAlternatives=3;
-  wakeRecog.onstart=()=>{_wakeBoot=false;};
+  wakeRecog.onstart=()=>{clearTimeout(_bootGuard);_wakeBoot=false;const d=_wakeDbg();if(d)d.textContent='👂 listening...';};
   wakeRecog.onerror=ev=>{
-    _wakeBoot=false;
+    clearTimeout(_bootGuard);_wakeBoot=false;
+    const d=_wakeDbg();if(d)d.textContent='err:'+ev.error;
     if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){
       wakeOn=false;wakeArmed=false;
       document.getElementById('wake-btn').classList.remove('active');
       alert('Mic permission needed. Allow it and try again.');
     }
   };
-  wakeRecog.onend=()=>{_wakeBoot=false;if(wakeOn)setTimeout(_startWake,50);}; // 50ms gap — like Hey Google
+  wakeRecog.onend=()=>{_wakeBoot=false;if(wakeOn)setTimeout(_startWake,50);};
   wakeRecog.onresult=e=>{
     let interim='',final_='';
     for(let i=e.resultIndex;i<e.results.length;i++){
       const t=e.results[i][0].transcript||'';
       if(e.results[i].isFinal)final_+=t+' '; else interim+=t+' ';
     }
-    const text=(final_.trim()||interim.trim()).toLowerCase();
+    const heard=(final_.trim()||interim.trim());
+    const text=heard.toLowerCase();
+    // Debug: show what Chrome actually hears so we can tune the pattern
+    const d=_wakeDbg();if(d)d.textContent='heard: "'+heard+'"';
     if(!text)return;
     if(!wakeArmed){
       const words=text.split(/\s+/);
       const wi=words.findIndex(wakeHit);
       if(wi===-1)return;
-      beep(880);wakeArmed=true;
-      // If a command followed the wake word in the same breath and it's final — send now
+      beep(880);wakeArmed=true;if(d)d.textContent='✓ armed — say command';
+      // Command in same breath and final — send now
       const after=words.slice(wi+1).filter(w=>!wakeHit(w)).join(' ').trim();
-      if(after&&final_.trim()){beep(1200);wakeArmed=false;inp.value=after;send();return;}
-      setTimeout(()=>{wakeArmed=false;},8000); // 8s window to say the command
+      if(after&&final_.trim()){beep(1200);wakeArmed=false;inp.value=after;send();if(d)d.textContent='sent: "'+after+'"';return;}
+      setTimeout(()=>{wakeArmed=false;if(d&&d.textContent.includes('armed'))d.textContent='👂 listening...';},8000);
     } else if(final_.trim()){
-      // Armed: next final result is the command
       const cmd=final_.trim().split(/\s+/).filter(w=>!wakeHit(w)).join(' ').trim();
-      if(cmd){beep(1200);wakeArmed=false;inp.value=cmd;send();}
+      if(cmd){beep(1200);wakeArmed=false;inp.value=cmd;send();if(d)d.textContent='sent: "'+cmd+'"';}
     }
   };
-  try{wakeRecog.start();}catch(e){_wakeBoot=false;if(wakeOn)setTimeout(_startWake,500);}
+  try{wakeRecog.start();}catch(e){clearTimeout(_bootGuard);_wakeBoot=false;if(wakeOn)setTimeout(_startWake,500);}
 }
 function toggleWake(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){alert('Voice not supported.');return;}
-  if(wakeOn){wakeOn=false;wakeArmed=false;_wakeBoot=false;try{wakeRecog&&wakeRecog.stop();}catch(e){}document.getElementById('wake-btn').classList.remove('active');return;}
-  wakeOn=true;document.getElementById('wake-btn').classList.add('active');
+  const d=_wakeDbg();
+  if(wakeOn){wakeOn=false;wakeArmed=false;_wakeBoot=false;try{wakeRecog&&wakeRecog.stop();}catch(e){}document.getElementById('wake-btn').classList.remove('active');if(d)d.textContent='';return;}
+  wakeOn=true;document.getElementById('wake-btn').classList.add('active');if(d)d.textContent='starting...';
   _startWake();
 }
 
