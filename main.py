@@ -28,6 +28,15 @@ or_client = OpenAI(
     api_key=os.environ.get("OPENROUTER_API_KEY"),
 )
 
+# Extra providers auto-activate the moment their key exists in the Render env.
+# No key -> the client is None and the chain silently skips that tier.
+NVIDIA_KEY = os.environ.get("NVIDIA_API_KEY")
+nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY) if NVIDIA_KEY else None
+
+# Paid tier: if an Anthropic key is present, Borfoli becomes literally Claude.
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
+claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TAVILY_KEY = os.environ.get("TAVILY_KEY")
@@ -36,9 +45,9 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
-ROUTER_MODEL   = "llama-3.1-8b-instant"
-FAST_MODEL     = "llama-3.3-70b-versatile"
-SYNTH_MODEL    = "llama-3.3-70b-versatile"
+ROUTER_MODEL   = "llama-3.1-8b-instant"   # fast + high-limit, stays on Groq for routing
+FAST_MODEL     = "google/gemini-2.0-flash-exp:free"  # chain lead; waterfalls on any failure
+SYNTH_MODEL    = "google/gemini-2.0-flash-exp:free"
 COUNCIL_MODELS = [
     ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
     ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
@@ -46,6 +55,28 @@ COUNCIL_MODELS = [
     ("llama-3.3-70b-versatile",                    "Llama"),
     ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
     ("gemma2-9b-it",                               "Gemma"),
+]
+
+# ── The brain: one ordered waterfall, smartest → fastest. Every /chat call runs
+# down this list until one answers. A rate-limited model is skipped for a short
+# cooldown so we don't waste a round-trip on it. Tiers with no key are skipped.
+# (model_id, provider). Providers: anthropic > nvidia > openrouter > groq.
+MEGA_CHAIN = [
+    # Tier 0 — true Claude-level. Only fires if you add ANTHROPIC_API_KEY.
+    ("claude-opus-4-8",                              "anthropic"),
+    ("claude-sonnet-5",                              "anthropic"),
+    # Tier 1 — best free brains. NVIDIA tiers need NVIDIA_API_KEY (free).
+    ("nvidia/llama-3.1-nemotron-70b-instruct",       "nvidia"),
+    ("deepseek-ai/deepseek-r1",                      "nvidia"),
+    ("meta/llama-3.3-70b-instruct",                  "nvidia"),
+    ("google/gemini-2.0-flash-exp:free",             "openrouter"),
+    ("deepseek/deepseek-chat-v3-0324:free",          "openrouter"),
+    ("qwen/qwen-2.5-72b-instruct:free",              "openrouter"),
+    ("meta-llama/llama-3.3-70b-instruct:free",       "openrouter"),
+    # Tier 2 — Groq floor. Always on, high daily limits, sub-second latency.
+    ("llama-3.3-70b-versatile",                      "groq"),
+    ("llama-3.1-8b-instant",                         "groq"),
+    ("gemma2-9b-it",                                 "groq"),
 ]
 
 JARVIS_PROMPT = """You are Borfoli — Mani's personal AI system. Not a chatbot. A fully autonomous executive layer.
@@ -736,40 +767,67 @@ def browse_url(url):
     except Exception as e:
         return f"[Could not load {url}: {e}]"
 
-GROQ_PREFIXES = ("openai/gpt-oss", "meta-llama", "qwen", "groq", "llama-")
+GROQ_PREFIXES = ("openai/gpt-oss", "groq", "llama-", "gemma", "qwen-", "deepseek-r1-distill", "mixtral")
 
-# When the daily token limit on the primary model is hit, fall through these.
-FALLBACK_MODELS = ["llama-3.1-8b-instant", "gemma2-9b-it"]
-OR_FALLBACK = "meta-llama/llama-3.3-70b-instruct:free"  # OpenRouter, separate quota
+# Reasoning models (R1/QwQ) emit <think>…</think> scratchpad — strip it so TTS
+# never reads the model's internal monologue aloud.
+THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+# Per-model cooldown: when a model 429s, park it briefly so the next request
+# skips straight to the next brain instead of wasting a round-trip.
+_cooldown = {}   # (model, provider) -> epoch when usable again
+
+def _client_for(provider):
+    return {"groq": client, "openrouter": or_client,
+            "nvidia": nv_client, "anthropic": claude_client}.get(provider)
+
+def _guess_provider(model):
+    if claude_client and model.startswith("claude"): return "anthropic"
+    if model.endswith(":free") or model.startswith(("google/", "deepseek/", "meta-llama/", "qwen/", "mistralai/")):
+        return "openrouter"
+    if any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model and "/" not in model:
+        return "groq"
+    return "openrouter"
 
 def _is_rate_limit(e):
     s = str(e).lower()
-    return "429" in s or "rate limit" in s or "quota" in s
+    return "429" in s or "rate limit" in s or "quota" in s or "resource_exhausted" in s
 
-def _one_call(model, messages, max_tokens):
-    use_groq = any(model.startswith(p) for p in GROQ_PREFIXES) or ":" not in model
-    c = client if use_groq else or_client
+def _one_call(model, messages, max_tokens, provider="groq"):
+    c = _client_for(provider)
+    if c is None:
+        raise RuntimeError(f"{provider} not configured")
     r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
-    return r.choices[0].message.content.strip()
+    out = (r.choices[0].message.content or "").strip()
+    return THINK_RE.sub("", out).strip()
 
 def groq_chat(model, messages, max_tokens=1024):
-    # Try the requested model, then Groq fallbacks, then OpenRouter — so a daily
-    # limit on one model degrades gracefully instead of breaking everything.
-    chain = [model] + [m for m in FALLBACK_MODELS if m != model] + [OR_FALLBACK]
+    # Waterfall: the caller's preferred model first, then the full MEGA_CHAIN,
+    # smartest → fastest. Any failure (rate limit, outage, unconfigured key)
+    # drops to the next brain. A 429 parks that model for 120s.
+    chain, seen = [], set()
+    for m, prov in [(model, _guess_provider(model))] + MEGA_CHAIN:
+        key = (m, prov)
+        if key in seen:
+            continue
+        seen.add(key)
+        chain.append(key)
     rate_limited = False
-    for m in chain:
+    now = time.time()
+    for m, prov in chain:
+        if _client_for(prov) is None:
+            continue
+        if _cooldown.get((m, prov), 0) > now:
+            continue                      # still cooling down from a recent 429
         try:
-            return _one_call(m, messages, max_tokens)
+            return _one_call(m, messages, max_tokens, prov)
         except Exception as e:
             if _is_rate_limit(e):
                 rate_limited = True
-                continue
-            # non-rate error on the primary — try one fallback then give up
-            if m == chain[0]:
-                continue
-            break
+                _cooldown[(m, prov)] = time.time() + 120
+            continue                      # any error → next brain
     if rate_limited:
-        return "[⚠ Daily model limit reached across providers. It resets on a rolling 24h window — try again later, or add a paid API key for unlimited use. I did NOT perform any action.]"
+        return "[⚠ Every free model is rate-limited at once — that's rare. Give it a minute and retry, or add a paid ANTHROPIC_API_KEY for unlimited use. I did NOT perform any action.]"
     return "[Model temporarily unavailable. I did NOT perform any action — try again.]"
 
 def fast_answer(msg, history, facts):
@@ -1185,12 +1243,19 @@ def add_schedule():
 
 @app.route("/models")
 def model_info():
+    # Only surface brains whose provider key actually exists — so the dashboard
+    # shows the real active waterfall, not tiers that are silently skipped.
+    active = [{"model": m, "provider": p} for m, p in MEGA_CHAIN if _client_for(p) is not None]
     return jsonify({
-        "primary": FAST_MODEL,
+        "primary": next((a["model"] for a in active), FAST_MODEL),
         "synthesizer": SYNTH_MODEL,
         "council": [{"model": m, "role": r} for m, r in COUNCIL_MODELS],
         "router": ROUTER_MODEL,
-        "total": len(COUNCIL_MODELS) + 2
+        "chain": active,
+        "brains_active": len(active),
+        "paid_claude": claude_client is not None,
+        "nvidia_on": nv_client is not None,
+        "total": len(active)
     })
 
 # ── Code Execution ────────────────────────────────────────────────────────────
