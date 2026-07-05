@@ -835,10 +835,10 @@ def groq_chat(model, messages, max_tokens=1024):
 # Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
 # old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
 VISION_CHAIN = [
-    ("meta/llama-3.2-90b-vision-instruct", "nvidia"),   # free via working NVIDIA key
-    ("meta/llama-3.2-11b-vision-instruct", "nvidia"),
-    ("gemini-2.0-flash",                   "google"),   # best, but needs a VALID GEMINI_API_KEY
-    ("gemini-2.5-flash",                   "google"),
+    ("meta-llama/llama-4-scout-17b-16e-instruct",     "groq"),    # FAST multimodal, working key
+    ("meta-llama/llama-4-maverick-17b-128e-instruct", "groq"),    # bigger multimodal fallback
+    ("gemini-2.0-flash",                              "google"),  # great, but needs a VALID Gemini key
+    ("meta/llama-3.2-11b-vision-instruct",           "nvidia"),   # last-resort (slow)
 ]
 
 _last_vision_errors = []   # diagnostics: why each vision model failed on the last call
@@ -862,7 +862,8 @@ def vision_call(b64, prompt, max_tokens=1200):
             continue
         try:
             r = c.chat.completions.create(
-                model=m, messages=[{"role": "user", "content": content}], max_tokens=max_tokens)
+                model=m, messages=[{"role": "user", "content": content}],
+                max_tokens=max_tokens, timeout=25)   # never hang on a slow provider
             out = (r.choices[0].message.content or "").strip()
             if out:
                 return THINK_RE.sub("", out).strip()
