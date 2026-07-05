@@ -1562,12 +1562,15 @@ def greeting():
     like Jarvis booting up. Time + weather aware, optionally notes his active window."""
     live = get_live_context()
     os_ctx = get_os_context()
-    situ = f"\n{os_ctx}" if os_ctx else ""
+    situ = (f"\n{os_ctx}" if os_ctx else
+            "\n[His desktop agent is OFFLINE — you CANNOT see his screen, apps, or what he's doing right now.]")
     prompt = (f"{JARVIS_PROMPT}\n\n{live}{situ}\n\n"
-              "Mani just opened you. Greet him ONCE, out loud, like Jarvis greeting Tony Stark on startup — "
-              "reference the time of day and the Frisco weather naturally, and if his desktop context is shown, "
-              "acknowledge what he's doing. 1-2 sharp sentences, warm but no fluff, no emojis, no markdown. "
-              "Do NOT end with a generic 'how can I help' — make it specific to this exact moment.")
+              "Mani just opened you. Greet him ONCE, like Jarvis on startup. Use ONLY the facts above — "
+              "the real current time and the Frisco weather. Match the greeting to the ACTUAL hour "
+              "(if it's night/late, acknowledge he's up late — do NOT say 'good morning'). "
+              "HARD RULE: unless a '[MANI'S DESKTOP]' block appears above, you have NO idea what's on his screen "
+              "or what he's doing — do NOT mention his screen, apps, files, or activity; do not invent it. "
+              "1-2 sharp sentences, warm, no fluff, no emojis, no markdown, and no generic 'how can I help'.")
     reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110)
     return jsonify({"greeting": reply, "context": live})
 
