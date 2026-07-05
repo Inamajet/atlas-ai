@@ -1023,22 +1023,39 @@ AGENT_INSTRUCTIONS = (
 
 _last_tool_err = {"e": ""}
 
+# Tool-calling now waterfalls across providers — so when Groq's daily limit maxes,
+# tools keep working on NVIDIA / OpenRouter instead of dying. Text-format tool calls
+# from models that don't emit native tool_calls are caught by _parse_text_tools.
+_TOOL_CHAIN = [
+    ("llama-3.3-70b-versatile",                 "groq"),
+    ("llama-3.1-8b-instant",                    "groq"),
+    ("nvidia/llama-3.1-nemotron-70b-instruct",  "nvidia"),
+    ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),
+    ("qwen/qwen-2.5-72b-instruct:free",         "openrouter"),
+]
+
 def _tool_completion(msgs, max_tokens=900):
-    """Tool-calling completion. Tries Groq 70b then 8b on ANY error (not just rate
-    limits) with a generous timeout — tool calls with big prompts can be slow.
-    Returns (response, error_kind) — error_kind is None, 'rate', or 'error'."""
-    last = ""
-    for m in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
+    """Waterfall tool-calling across all providers. Returns (response, error_kind);
+    error_kind is None, 'rate', or 'error'."""
+    last = ""; any_rate = False
+    now = time.time()
+    for m, prov in _TOOL_CHAIN:
+        c = _client_for(prov)
+        if c is None:
+            continue
+        if _cooldown.get((m, prov), 0) > now:
+            any_rate = True; continue
         try:
-            r = client.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
+            r = c.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
                 tool_choice="auto", max_tokens=max_tokens, temperature=0.3, timeout=45)
             return r, None
         except Exception as e:
             last = f"{type(e).__name__}: {e}"
-            continue                      # try the next model on ANY failure
+            if _is_rate_limit(e):
+                any_rate = True; _cooldown[(m, prov)] = time.time() + 120
+            continue
     _last_tool_err["e"] = last[:400]
-    kind = "rate" if ("rate" in last.lower() or "429" in last or "quota" in last.lower()) else "error"
-    return None, kind
+    return None, ("rate" if any_rate else "error")
 
 def _parse_text_tools(content):
     """Groq's llama models sometimes emit tool calls as TEXT (e.g.
