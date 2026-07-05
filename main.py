@@ -57,8 +57,8 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"   # fast + high-limit, stays on Groq for routing
-FAST_MODEL     = "google/gemini-2.0-flash-exp:free"  # chain lead; waterfalls on any failure
-SYNTH_MODEL    = "google/gemini-2.0-flash-exp:free"
+FAST_MODEL     = "llama-3.3-70b-versatile"   # fast Groq default; waterfalls on any failure
+SYNTH_MODEL    = "llama-3.3-70b-versatile"
 COUNCIL_MODELS = [
     ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
     ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
@@ -68,24 +68,26 @@ COUNCIL_MODELS = [
     ("gemma2-9b-it",                               "Gemma"),
 ]
 
-# ── The brain: one ordered waterfall, smartest → fastest. Every /chat call runs
-# down this list until one answers. A rate-limited model is skipped for a short
-# cooldown so we don't waste a round-trip on it. Tiers with no key are skipped.
-# (model_id, provider). Providers: anthropic > nvidia > openrouter > groq.
+# ── The brain: one ordered waterfall, tuned for FAST-and-smart, not slowest-smartest.
+# A hanging assistant is useless, and free "smartest" models (NVIDIA Nemotron,
+# DeepSeek-R1) are SLOW — so we lead with Groq's sub-second Llama-3.3-70b (genuinely
+# strong) and keep the heavier brains as deeper fallbacks. Claude (if a key is added)
+# still takes top priority — it's both smartest AND fast. A model that rate-limits or
+# times out is parked (cooldown) so it doesn't waste a round-trip next time.
+# (model_id, provider). DeepSeek-R1 reasoning stays out of chat (it's in the council).
 MEGA_CHAIN = [
-    # Tier 0 — true Claude-level. Only fires if you add ANTHROPIC_API_KEY.
+    # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — best free brains. NVIDIA tiers need NVIDIA_API_KEY (free).
+    # Tier 1 — FAST default. Groq Llama-3.3-70b is ~1s and strong.
+    ("llama-3.3-70b-versatile",                      "groq"),
+    ("google/gemini-2.0-flash-exp:free",             "openrouter"),   # fast + smart
+    # Tier 2 — heavier free brains (slower; used only if the fast tier is exhausted).
     ("nvidia/llama-3.1-nemotron-70b-instruct",       "nvidia"),
-    ("deepseek-ai/deepseek-r1",                      "nvidia"),
-    ("meta/llama-3.3-70b-instruct",                  "nvidia"),
-    ("google/gemini-2.0-flash-exp:free",             "openrouter"),
     ("deepseek/deepseek-chat-v3-0324:free",          "openrouter"),
     ("qwen/qwen-2.5-72b-instruct:free",              "openrouter"),
     ("meta-llama/llama-3.3-70b-instruct:free",       "openrouter"),
-    # Tier 2 — Groq floor. Always on, high daily limits, sub-second latency.
-    ("llama-3.3-70b-versatile",                      "groq"),
+    # Tier 3 — Groq floor. Always on, high daily limits, sub-second latency.
     ("llama-3.1-8b-instant",                         "groq"),
     ("gemma2-9b-it",                                 "groq"),
 ]
