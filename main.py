@@ -637,20 +637,15 @@ def _tool_see_screen(question):
     dims, b64 = ("", raw)
     if "|" in raw[:20]:
         dims, b64 = raw.split("|", 1)
-    coord_note = (f"The real screen is {dims} pixels. If asked to locate something for a click, "
-                  f"give pixel coordinates in that full range (top-left is 0,0). ") if dims else ""
-    try:
-        r = or_client.chat.completions.create(
-            model="meta-llama/llama-3.2-11b-vision-instruct:free",
-            messages=[{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": coord_note + (question or "What's on the screen right now? Describe what the user is doing and anything notable.")}
-            ]}],
-            max_tokens=1000,
-        )
-        return (f"[screen {dims}] " if dims else "") + r.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Captured the screen but couldn't interpret it: {e}"
+    coord_note = (f"The real screen is {dims} pixels (top-left is 0,0, bottom-right is {dims}). "
+                  f"When locating something to click, give the PIXEL COORDINATES OF ITS CENTER "
+                  f"in that full range, e.g. 'the Send button is at (1240, 780)'. Be precise — "
+                  f"these coordinates are used to click directly. ") if dims else ""
+    ans = vision_call(b64, coord_note + (question or
+        "What's on the screen right now? Describe what the user is doing and anything notable."))
+    if ans is None:
+        return "Captured the screen but every vision model was unavailable — try again."
+    return (f"[screen {dims}] " if dims else "") + ans
 
 def _tool_check_mani_pc():
     if not os_telemetry:
@@ -829,6 +824,40 @@ def groq_chat(model, messages, max_tokens=1024):
     if rate_limited:
         return "[⚠ Every free model is rate-limited at once — that's rare. Give it a minute and retry, or add a paid ANTHROPIC_API_KEY for unlimited use. I did NOT perform any action.]"
     return "[Model temporarily unavailable. I did NOT perform any action — try again.]"
+
+# ── Vision waterfall — Borfoli's eyes for computer-use (screen reading + clicks).
+# Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
+# old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
+VISION_CHAIN = [
+    ("google/gemini-2.0-flash-exp:free",              "openrouter"),  # strong, accurate coords
+    ("meta-llama/llama-3.2-90b-vision-instruct:free", "openrouter"),
+    ("meta-llama/llama-3.2-11b-vision-instruct:free", "openrouter"),
+]
+
+def vision_call(b64, prompt, max_tokens=1200):
+    """Send a screenshot + prompt down the vision waterfall. Returns text or None."""
+    content = [
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+        {"type": "text", "text": prompt},
+    ]
+    now = time.time()
+    for m, prov in VISION_CHAIN:
+        c = _client_for(prov)
+        if c is None:
+            continue
+        if _cooldown.get((m, prov), 0) > now:
+            continue
+        try:
+            r = c.chat.completions.create(
+                model=m, messages=[{"role": "user", "content": content}], max_tokens=max_tokens)
+            out = (r.choices[0].message.content or "").strip()
+            if out:
+                return THINK_RE.sub("", out).strip()
+        except Exception as e:
+            if _is_rate_limit(e):
+                _cooldown[(m, prov)] = time.time() + 120
+            continue
+    return None
 
 def fast_answer(msg, history, facts):
     msgs = [{"role": "system", "content": JARVIS_PROMPT}]
@@ -1299,18 +1328,8 @@ def vision():
     prompt = data.get("prompt", "What do you see in this image?")
     facts, _ = load_memory()
     full_prompt = f"{JARVIS_PROMPT}\n\nUser memory:\n{facts}\n\nUser says: {prompt}"
-    try:
-        r = or_client.chat.completions.create(
-            model="meta-llama/llama-3.2-11b-vision-instruct:free",
-            messages=[{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                {"type": "text", "text": full_prompt}
-            ]}],
-            max_tokens=1500
-        )
-        return jsonify({"reply": r.choices[0].message.content.strip()})
-    except Exception as e:
-        return jsonify({"reply": f"Vision error: {e}"})
+    ans = vision_call(image_b64, full_prompt, max_tokens=1500)
+    return jsonify({"reply": ans or "Vision temporarily unavailable — try again."})
 
 # ── Realistic TTS (ElevenLabs) ─────────────────────────────────────────────────
 # Set ELEVENLABS_KEY (and optionally ELEVENLABS_VOICE) as env vars to enable a
