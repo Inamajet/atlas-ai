@@ -1081,7 +1081,7 @@ def agent_answer(msg, history, facts):
                     "It resets on a rolling 24h window — try again later, or add a paid API key for "
                     "unlimited use. I did NOT do anything just now.")
         if err:
-            return "I hit an error reaching my tools, so nothing was done. [debug: " + _last_tool_err.get("e", "") + "]"
+            return "I hit a snag reaching my tools just now — nothing was done. Give it another shot."
         choice = r.choices[0].message
         calls = choice.tool_calls
         if not calls:
