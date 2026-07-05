@@ -1045,14 +1045,14 @@ _last_tool_err = {"e": ""}
 # from models that don't emit native tool_calls are caught by _parse_text_tools.
 _TOOL_CHAIN = [
     # Native tool-calling providers, best-first. Groq + Cerebras are the reliable free
-    # ones; Cerebras covers Groq's daily limit. Others are long-shot fallbacks.
+    # ones; Cerebras (gpt-oss-120b) covers Groq's daily limit. Dropped models that 404
+    # (wrong id / no tool support) or 413 (too small for the tool payload).
     ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
     ("llama-3.3-70b-versatile",                 "groq"),
-    ("llama-3.3-70b",                           "cerebras"),    # only if key set
-    ("llama-3.1-8b-instant",                    "groq"),
-    ("llama3.1-8b",                             "cerebras"),
-    ("nvidia/llama-3.1-nemotron-70b-instruct",  "nvidia"),
-    ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),
+    ("gpt-oss-120b",                            "cerebras"),    # fast, strong native tool-calling
+    ("qwen-3-32b",                              "cerebras"),    # cerebras backup
+    ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),  # last-resort
+    ("qwen/qwen-2.5-72b-instruct:free",         "openrouter"),
 ]
 
 def _tool_completion(msgs, max_tokens=900):
