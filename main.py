@@ -494,6 +494,150 @@ def mani_os_read_answer(msg, history, facts):
 # Real capabilities: browse the web, search, read live Mani OS state, control the
 # dashboard, and see Mani's PC. A tool-calling loop lets the model chain these.
 
+# ── Obsidian vault: cloud-side semantic memory (ZERO PC load) ──────────────────
+# The local agent ships raw note text up here; ALL chunking / embedding / search
+# runs server-side. In-memory vectors (fast, NVIDIA embeddings) + a text-only copy
+# persisted to Supabase (row 997) so a cold start still has lexical search until
+# the next sync. Degrades gracefully: no NVIDIA key / embed failure -> keyword search.
+VAULT_ROW = 997
+VAULT_INDEX = {"method": "", "chunks": [], "notes": 0, "updated": 0}
+_VAULT_EMBED_MODELS = ["nvidia/nv-embedqa-e5-v5", "baai/bge-m3"]
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+def _toks(s):
+    return _WORD_RE.findall((s or "").lower())
+
+def _embed(texts, input_type):
+    """List[vec] via NVIDIA embeddings, or None if unavailable/fails fast."""
+    if nv_client is None or not texts:
+        return None
+    for model in _VAULT_EMBED_MODELS:
+        try:
+            try:
+                r = nv_client.embeddings.create(model=model, input=texts, timeout=25,
+                    extra_body={"input_type": input_type, "truncate": "END"})
+            except TypeError:
+                r = nv_client.embeddings.create(model=model, input=texts, timeout=25)
+            return [d.embedding for d in r.data]
+        except Exception:
+            continue
+    return None
+
+def _chunk_note(text, title, path, size=800, overlap=150):
+    text = (text or "").strip()
+    if not text:
+        return []
+    out, i = [], 0
+    while i < len(text):
+        out.append({"path": path, "title": title, "text": text[i:i+size]})
+        if i + size >= len(text):
+            break
+        i += size - overlap
+    return out
+
+def _cos(a, b):
+    dot = sum(x*y for x, y in zip(a, b))
+    na = sum(x*x for x in a) ** 0.5
+    nb = sum(y*y for y in b) ** 0.5
+    return dot / (na*nb) if na and nb else 0.0
+
+def rebuild_vault(notes):
+    """notes = [{'path','text'}]. Chunk, embed in batches, store in memory + persist."""
+    chunks = []
+    for n in notes:
+        path = n.get("path", "")
+        title = (path.replace("\\", "/").split("/")[-1] or path).rsplit(".", 1)[0]
+        chunks.extend(_chunk_note(n.get("text", ""), title, path))
+    chunks = chunks[:600]  # phase-1 cap
+    vecs_ok = bool(chunks)
+    for i in range(0, len(chunks), 50):
+        batch = [c["text"] for c in chunks[i:i+50]]
+        vs = _embed(batch, "passage")
+        if vs is None or len(vs) != len(batch):
+            vecs_ok = False
+            break
+        for c, v in zip(chunks[i:i+50], vs):
+            c["vec"] = v
+    if vecs_ok:
+        method = "nvidia"
+    else:
+        for c in chunks:
+            c.pop("vec", None)
+        method = "lexical"
+    VAULT_INDEX.update({"method": method, "chunks": chunks,
+                        "notes": len(notes), "updated": int(time.time())})
+    _persist_vault_text()
+    return {"chunks": len(chunks), "notes": len(notes), "method": method}
+
+def _persist_vault_text():
+    try:
+        light = [{"path": c["path"], "title": c["title"], "text": c["text"]} for c in VAULT_INDEX["chunks"]]
+        payload = {"id": VAULT_ROW, "history": "[]",
+                   "facts": json.dumps({"chunks": light, "notes": VAULT_INDEX["notes"],
+                                        "updated": VAULT_INDEX["updated"]})[:900000]}
+        requests.post(f"{SUPABASE_URL}/rest/v1/atlas_memory",
+                      headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, json=payload, timeout=12)
+    except Exception:
+        pass
+
+def load_vault():
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/atlas_memory?id=eq.{VAULT_ROW}", headers=HEADERS, timeout=10)
+        rows = r.json()
+        if rows and rows[0].get("facts"):
+            d = json.loads(rows[0]["facts"])
+            VAULT_INDEX.update({"method": "lexical", "chunks": d.get("chunks", []),
+                                "notes": d.get("notes", 0), "updated": d.get("updated", 0)})
+    except Exception:
+        pass
+
+def vault_search(query, k=5):
+    chunks = VAULT_INDEX["chunks"]
+    if not chunks:
+        return []
+    scored = []
+    qvec = _embed([query], "query") if VAULT_INDEX["method"] == "nvidia" else None
+    if qvec:
+        qv = qvec[0]
+        scored = [(_cos(qv, c["vec"]), c) for c in chunks if "vec" in c]
+    if not scored:                              # lexical fallback
+        qt = set(_toks(query))
+        if not qt:
+            return []
+        for c in chunks:
+            ov = sum(1 for w in set(_toks(c["text"])) if w in qt)
+            if ov:
+                scored.append((ov / (len(qt) ** 0.5), c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:k]]
+
+def vault_context(query, k=3):
+    """Cheap ambient retrieval for the plain-chat path — lexical only, no API call."""
+    chunks = VAULT_INDEX["chunks"]
+    if not chunks:
+        return ""
+    qt = set(_toks(query))
+    if len(qt) < 2:
+        return ""
+    scored = []
+    for c in chunks:
+        ov = sum(1 for w in set(_toks(c["text"])) if w in qt)
+        if ov >= 2:
+            scored.append((ov, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [c for _, c in scored[:k]]
+    if not top:
+        return ""
+    return "From Mani's notes:\n" + "\n".join(f"[{c['title']}] {c['text'][:400]}" for c in top)
+
+def _tool_search_notes(query, k=5):
+    res = vault_search(query, min(int(k or 5), 8))
+    if not res:
+        if not VAULT_INDEX["chunks"]:
+            return "Mani's Obsidian vault isn't synced yet. He needs to set OBSIDIAN_VAULT in borfoli_agent.py and run it."
+        return "No matching notes found in his vault."
+    return "\n\n".join(f"[{c['title']}]\n{c['text']}" for c in res)[:5000]
+
 AGENT_TOOLS = [
     {"type": "function", "function": {
         "name": "web_search",
@@ -600,6 +744,14 @@ AGENT_TOOLS = [
             "body": {"type": "string", "description": "Email body"}
         }, "required": ["to", "subject", "body"]}
     }},
+    {"type": "function", "function": {
+        "name": "search_notes",
+        "description": "Search Mani's personal Obsidian knowledge vault — his own notes, ideas, research, study material, plans and logs. Use whenever he references 'my notes', asks about something he wrote down / studied / planned, or when his personal knowledge would answer better than the web.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "What to look for in his notes"},
+            "k": {"type": "integer", "description": "How many note snippets to return (default 5)"}
+        }, "required": ["query"]}
+    }},
 ]
 
 def _tool_web_search(query):
@@ -680,10 +832,12 @@ _TOOL_FNS = {
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
+    "search_notes":  lambda a: _tool_search_notes(a.get("query", ""), a.get("k", 5)),
 }
 
 AGENT_INSTRUCTIONS = (
     "You have real tools — USE them, don't guess: search the web, open/read pages, "
+    "search Mani's personal Obsidian notes (search_notes) for anything he's written/studied/planned, "
     "read and control Mani's dashboard, see his screen, and fully control his PC — mouse, "
     "keyboard, apps, files, email. "
     "When he asks you to open, launch, play, show, run, or check something, JUST DO IT with the "
@@ -703,7 +857,9 @@ AGENT_INSTRUCTIONS = (
 def _tool_completion(msgs, max_tokens=900):
     """Tool-calling completion with rate-limit fallback to a lighter model.
     Returns (response, error_kind) — error_kind is None, 'rate', or 'error'."""
-    for m in (FAST_MODEL, "llama-3.1-8b-instant"):
+    # Tool-calling runs on the Groq `client`, so use Groq model ids here (FAST_MODEL
+    # is now an OpenRouter id and would be rejected → silent 8B fallback).
+    for m in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
         try:
             r = client.chat.completions.create(model=m, messages=msgs, tools=AGENT_TOOLS,
                 tool_choice="auto", max_tokens=max_tokens, temperature=0.3)
@@ -881,6 +1037,8 @@ def fast_answer(msg, history, facts):
     if facts: ctx.append(f"Memory:\n{facts}")
     os_ctx = get_os_context()
     if os_ctx: ctx.append(os_ctx)
+    vault_ctx = vault_context(msg)          # ambient recall from his Obsidian notes (cheap, no API)
+    if vault_ctx: ctx.append(vault_ctx)
     if ctx: msgs.append({"role": "system", "content": "\n\n".join(ctx)})
     for h in history[-10:]: msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": msg})
@@ -1023,6 +1181,13 @@ def morning_brief():
 
 scheduler.add_job(morning_brief, "cron", hour=8, minute=0, timezone="US/Central")
 scheduler.start()
+
+# Warm the vault index from Supabase so a cold start has lexical note-search
+# immediately (vectors get rebuilt on the agent's next /vault/sync).
+try:
+    load_vault()
+except Exception:
+    pass
 
 def restore_tasks():
     try:
@@ -1302,6 +1467,23 @@ def model_info():
         "nvidia_on": nv_client is not None,
         "total": len(active)
     })
+
+@app.route("/vault/sync", methods=["POST"])
+def vault_sync():
+    data = request.json or {}
+    notes = data.get("notes") or []
+    if not isinstance(notes, list):
+        return jsonify({"error": "notes must be a list"}), 400
+    notes = [{"path": str(n.get("path", "")), "text": str(n.get("text", ""))[:20000]}
+             for n in notes if n.get("text")]
+    if not notes:
+        return jsonify({"error": "no notes with text"}), 400
+    return jsonify({"status": "ok", **rebuild_vault(notes)})
+
+@app.route("/vault/status")
+def vault_status():
+    return jsonify({"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]),
+                    "method": VAULT_INDEX["method"], "updated": VAULT_INDEX["updated"]})
 
 # ── Code Execution ────────────────────────────────────────────────────────────
 
