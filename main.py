@@ -1501,13 +1501,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
         <div id="iw">
           <textarea id="inp" placeholder="Interface with BORFOLI..." rows="1"></textarea>
           <button class="tbtn" id="mic-btn" onclick="toggleVoice()" title="Voice input">🎤</button>
-          <button class="tbtn" id="wake-btn" onclick="toggleWake()" title="Wake word: say &quot;Bor&quot; or &quot;Borfoli&quot;">👂</button>
+          <button class="tbtn" id="wake-btn" onclick="toggleWake()" title="Wake word: say &quot;Borfoli&quot;">👂</button>
           <button class="tbtn" id="tts-btn" onclick="toggleTTS()" title="Voice output (speak replies)">🔊</button>
           <button class="tbtn" onclick="document.getElementById('img-in').click()" title="Attach image">📎</button>
           <input type="file" id="img-in" accept="image/*" style="display:none" onchange="handleImg(event)">
           <button id="sbtn" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
-        <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "Bor") · 🔊 TTS
+        <div id="hint">ENTER send · 🎤 voice · 👂 wake (say "Borfoli") · 🔊 TTS
           <select id="voice-sel" title="Pick Borfoli's voice (Edge has the realistic ones)"></select>
           <span id="wake-dbg" style="color:#888;font-size:10px;margin-left:6px;font-style:italic"></span>
         </div>
@@ -1802,12 +1802,16 @@ function wakeChime(){
   }catch(e){}
 }
 function wakeHit(w){
+  // Only match multi-syllable phonetics of "borfoli" — avoids false positives from "bor"/"bore"/"bored"
   w=(w||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
   if(!w)return false;
-  if(/\bbor\b/.test(w))return true;
-  if(w.includes('borfo')||w.includes('orfol')||w.includes('portfol')||w.includes('borph'))return true;
-  if(/\bfor\s+fol|\bfor\s+ful|\bfore\s+fol/.test(w))return true;
-  return /\b(borf\w*|boar?f\w*|bore|bored|board|boron|buffalo|before|boarding|boredom|forfe\w*|bourg\w*|bor[aeiou]\w*)\b/.test(w);
+  // Exact or near-exact
+  if(w.includes('borfo')||w.includes('orfoli')||w.includes('portfol')||w.includes('borph'))return true;
+  // Phonetic mishearings of "borfoli" as two words
+  if(/\bfor\s+fol|\bfor\s+ful|\bfore\s+fol|\bborn\s+fol/.test(w))return true;
+  // "born from light" — what borfoli stands for
+  if(w.includes('born from light')||w.includes('born from li'))return true;
+  return false;
 }
 function _fireCmd(cmd,d){
   if(!wakeArmed||!cmd)return;
