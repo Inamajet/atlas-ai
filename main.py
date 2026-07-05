@@ -1852,10 +1852,14 @@ function _startWake(){
     if(!text)return;
     if(!wakeArmed){
       const words=text.split(/\s+/);
-      const wi=words.findIndex(wakeHit);
+      // Multi-word phrase check on full text (word-by-word findIndex can't catch these)
+      let wi=-1,skipWords=0;
+      if(text.includes('born from light')){wi=0;skipWords=3;}
+      else if(text.includes('born from li')){wi=0;skipWords=3;}
+      else{wi=words.findIndex(wakeHit);skipWords=1;}
       if(wi===-1)return;
       wakeChime();wakeArmed=true;if(d)d.textContent='✓ armed — say command';
-      const after=words.slice(wi+1).filter(w=>!wakeHit(w)).join(' ').trim();
+      const after=words.slice(wi+skipWords).filter(w=>!wakeHit(w)).join(' ').trim();
       if(after&&final_.trim()){_fireCmd(after,d);return;}
       // Arm timeout: auto-disarm after 8s if no command
       setTimeout(()=>{wakeArmed=false;clearTimeout(_cmdTimer);if(d&&d.textContent.includes('armed'))d.textContent='👂 listening...';},8000);
