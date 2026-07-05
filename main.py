@@ -145,7 +145,7 @@ _WMO = {0:"clear",1:"mostly clear",2:"partly cloudy",3:"overcast",45:"foggy",48:
         66:"freezing rain",67:"freezing rain",71:"light snow",73:"snow",75:"heavy snow",
         77:"snow",80:"showers",81:"showers",82:"heavy showers",85:"snow showers",86:"snow showers",
         95:"thunderstorms",96:"thunderstorms",99:"thunderstorms"}
-_weather_cache = {"t": 0, "text": ""}
+_weather_cache = {"t": 0, "text": "", "err": ""}
 
 def _weather():
     if time.time() - _weather_cache["t"] < 1800 and _weather_cache["text"]:
@@ -153,12 +153,13 @@ def _weather():
     try:
         r = requests.get("https://api.open-meteo.com/v1/forecast",
             params={"latitude": 33.15, "longitude": -96.82, "current": "temperature_2m,weather_code",
-                    "temperature_unit": "fahrenheit", "timezone": "America/Chicago"}, timeout=8)
+                    "temperature_unit": "fahrenheit", "timezone": "America/Chicago"}, timeout=12)
         d = r.json()["current"]
         txt = f"{round(d['temperature_2m'])}°F {_WMO.get(d['weather_code'], '')}".strip()
-        _weather_cache.update({"t": time.time(), "text": txt})
+        _weather_cache.update({"t": time.time(), "text": txt, "err": ""})
         return txt
-    except Exception:
+    except Exception as e:
+        _weather_cache["err"] = f"{type(e).__name__}: {e}"[:200]
         return _weather_cache["text"]
 
 def get_live_context():
@@ -1572,7 +1573,8 @@ def greeting():
               "or what he's doing — do NOT mention his screen, apps, files, or activity; do not invent it. "
               "1-2 sharp sentences, warm, no fluff, no emojis, no markdown, and no generic 'how can I help'.")
     reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110)
-    return jsonify({"greeting": reply, "context": live})
+    return jsonify({"greeting": reply, "context": live,
+                    "wx": _weather_cache.get("text", ""), "wx_err": _weather_cache.get("err", "")})
 
 # ── Code Execution ────────────────────────────────────────────────────────────
 
