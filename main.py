@@ -1090,60 +1090,54 @@ def _parse_text_tools(content):
                 except Exception: calls.append((name, {}))
     return calls
 
-def agent_answer(msg, history, facts):
-    """Multi-step tool-calling agent. Borfoli plans, uses tools, and acts."""
-    os_ctx = get_os_context()
-    sys_blocks = [JARVIS_PROMPT, AGENT_INSTRUCTIONS]
-    if facts: sys_blocks.append(f"Memory:\n{facts[:1500]}")
-    if os_ctx: sys_blocks.append(os_ctx)
+def _tools_text():
+    lines = []
+    for t in AGENT_TOOLS:
+        f = t["function"]
+        args = ", ".join((f.get("parameters", {}).get("properties", {}) or {}).keys())
+        lines.append(f"- {f['name']}({args}): {f['description']}")
+    return "\n".join(lines)
 
-    msgs = [{"role": "system", "content": "\n\n".join(sys_blocks)}]
+def agent_answer(msg, history, facts):
+    """Provider-agnostic tool agent. Tools are described in TEXT and the model replies
+    with <tool_name>{json}</tool_name> calls that we parse + execute. Runs on the FULL
+    provider waterfall (groq_chat) so it keeps working when Groq's daily limit maxes —
+    native tool-calling only worked on Groq, which was the single point of failure."""
+    os_ctx = get_os_context()
+    sys = "\n\n".join(x for x in [
+        JARVIS_PROMPT, AGENT_INSTRUCTIONS,
+        ("YOUR TOOLS — to use one, output EXACTLY this, on its own line:\n"
+         "<tool_name>{\"arg\": \"value\"}</tool_name>\n"
+         "Call one or several (one per line). The moment you have what you need, STOP using tools and write your "
+         "final reply to Mani in plain prose with NO tool syntax and NO JSON.\n\n" + _tools_text()),
+        (f"Memory:\n{facts[:1500]}" if facts else ""),
+        (os_ctx or ""),
+    ] if x)
+    msgs = [{"role": "system", "content": sys}]
     for h in history[-4:]:
         msgs.append({"role": h["role"], "content": (h.get("content") or "")[:800]})
     msgs.append({"role": "user", "content": msg})
 
-    for _ in range(4):  # up to 4 tool rounds (was 6 — save tokens)
-        r, err = _tool_completion(msgs)
-        if err == "rate":
-            return ("⚠ My daily model limit is maxed out right now, so I can't run tools this second. "
-                    "It resets on a rolling 24h window — try again later, or add a paid API key for "
-                    "unlimited use. I did NOT do anything just now.")
-        if err:
-            return "I hit a snag reaching my tools just now — nothing was done. Give it another shot."
-        choice = r.choices[0].message
-        calls = choice.tool_calls
+    for _ in range(5):
+        out = groq_chat(FAST_MODEL, msgs, max_tokens=900)
+        if out.startswith("[") and ("limit" in out.lower() or "unavailable" in out.lower()):
+            return out                        # every provider genuinely down — honest message
+        calls = _parse_text_tools(out)
         if not calls:
-            # Fallback: model emitted tool calls as text instead of native tool_calls
-            text_calls = _parse_text_tools(choice.content)
-            if text_calls:
-                msgs.append({"role": "assistant", "content": choice.content or ""})
-                results = []
-                for name, args in text_calls:
-                    fn = _TOOL_FNS.get(name)
-                    results.append(f"[{name}] → {str(fn(args) if fn else 'unknown tool')[:3500]}")
-                msgs.append({"role": "user", "content":
-                    "Tool results:\n" + "\n\n".join(results) +
-                    "\n\nNow answer Mani directly using these results. Do NOT emit any more tool syntax."})
-                continue
-            return choice.content or "Done."
-        msgs.append({"role": "assistant", "content": choice.content or "",
-                     "tool_calls": [{"id": c.id, "type": "function",
-                        "function": {"name": c.function.name, "arguments": c.function.arguments}}
-                        for c in calls]})
-        for c in calls:
-            try:
-                args = json.loads(c.function.arguments or "{}")
-            except Exception:
-                args = {}
-            fn = _TOOL_FNS.get(c.function.name)
-            result = fn(args) if fn else f"Unknown tool {c.function.name}"
-            msgs.append({"role": "tool", "tool_call_id": c.id, "content": str(result)[:4000]})
-    # Ran out of rounds — one light synthesis pass
-    try:
-        r = client.chat.completions.create(model="llama-3.1-8b-instant", messages=msgs, max_tokens=700)
-        return r.choices[0].message.content or "Done."
-    except Exception:
-        return "I took several steps but ran out of room to finish. Ask me to continue."
+            return out                        # no tool call => this is the final answer
+        msgs.append({"role": "assistant", "content": out})
+        results = []
+        for name, args in calls:
+            fn = _TOOL_FNS.get(name)
+            results.append(f"[{name}] result: {str(fn(args) if fn else 'unknown tool ' + name)[:3500]}")
+        msgs.append({"role": "user", "content":
+            "TOOL RESULTS (the ONLY things that actually happened — report only these, invent nothing):\n"
+            + "\n\n".join(results) +
+            "\n\nIf the task is complete, give Mani your final answer in plain prose (no tool syntax). "
+            "If another step is needed, call the next tool."})
+    return groq_chat(FAST_MODEL, msgs + [{"role": "user", "content":
+        "Wrap up now: tell Mani plainly what you did and found, based ONLY on the tool results above. No tool syntax."}],
+        max_tokens=600)
 
 def browse_url(url):
     try:
