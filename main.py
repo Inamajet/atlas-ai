@@ -618,24 +618,31 @@ def vault_search(query, k=5):
     scored.sort(key=lambda x: x[0], reverse=True)
     return [c for _, c in scored[:k]]
 
+_STOP = {"what","when","where","which","that","this","with","your","yours","have",
+         "does","about","from","they","them","then","there","here","into","some",
+         "only","just","like","need","want","tell","show","give","make","should"}
+
 def vault_context(query, k=3):
-    """Cheap ambient retrieval for the plain-chat path — lexical only, no API call."""
+    """Cheap ambient retrieval for every chat path — lexical only, no API call.
+    Matches on meaningful words (len>=4, minus stopwords) so a single strong term
+    like a proper noun triggers recall, without common words causing noise."""
     chunks = VAULT_INDEX["chunks"]
     if not chunks:
         return ""
-    qt = set(_toks(query))
-    if len(qt) < 2:
+    qt = {w for w in _toks(query) if len(w) >= 4 and w not in _STOP}
+    if not qt:
         return ""
     scored = []
     for c in chunks:
-        ov = sum(1 for w in set(_toks(c["text"])) if w in qt)
-        if ov >= 2:
+        ov = len({w for w in _toks(c["text"]) if w in qt})
+        if ov:
             scored.append((ov, c))
     scored.sort(key=lambda x: x[0], reverse=True)
     top = [c for _, c in scored[:k]]
     if not top:
         return ""
-    return "From Mani's notes:\n" + "\n".join(f"[{c['title']}] {c['text'][:400]}" for c in top)
+    return "From Mani's own notes (use these as the source of truth):\n" + \
+           "\n".join(f"[{c['title']}] {c['text'][:400]}" for c in top)
 
 def _tool_search_notes(query, k=5):
     res = vault_search(query, min(int(k or 5), 8))
@@ -1046,8 +1053,6 @@ def fast_answer(msg, history, facts):
     if facts: ctx.append(f"Memory:\n{facts}")
     os_ctx = get_os_context()
     if os_ctx: ctx.append(os_ctx)
-    vault_ctx = vault_context(msg)          # ambient recall from his Obsidian notes (cheap, no API)
-    if vault_ctx: ctx.append(vault_ctx)
     if ctx: msgs.append({"role": "system", "content": "\n\n".join(ctx)})
     for h in history[-10:]: msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": msg})
@@ -1346,6 +1351,11 @@ def chat():
     msg = data.get("message", "").strip()
     if not msg: return jsonify({"reply": "Say something."})
     facts, history = load_memory()
+    # Ambient recall from his Obsidian notes — fold into `facts` BEFORE routing so
+    # every path (fast, council, agent) sees relevant notes. Cheap (lexical, no API).
+    vault_ctx = vault_context(msg)
+    if vault_ctx:
+        facts = (facts + "\n\n" + vault_ctx).strip()
 
     # ── Mani OS write actions ─────────────────────────────────────────────
     action_result = try_mani_os_action(msg)
