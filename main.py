@@ -22,26 +22,31 @@ def require_auth():
     if not auth or auth.password != APP_PASSWORD:
         return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Borfoli"'})
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# 20s default timeout on EVERY client so one stalled provider can't hang a whole
+# request — the waterfall fails over instead of blocking. Per-call timeouts (vision,
+# embeddings) override this where a longer wait is warranted.
+CLIENT_TIMEOUT = 20
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"), timeout=CLIENT_TIMEOUT)
 or_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
+    timeout=CLIENT_TIMEOUT,
 )
 
 # Extra providers auto-activate the moment their key exists in the Render env.
 # No key -> the client is None and the chain silently skips that tier.
 NVIDIA_KEY = os.environ.get("NVIDIA_API_KEY")
-nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY) if NVIDIA_KEY else None
+nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY, timeout=CLIENT_TIMEOUT) if NVIDIA_KEY else None
 
 # Paid tier: if an Anthropic key is present, Borfoli becomes literally Claude.
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
-claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY, timeout=CLIENT_TIMEOUT) if ANTHROPIC_KEY else None
 
 # Google Gemini direct API (OpenAI-compatible). Separate, generous free quota
 # (~1500/day) vs OpenRouter's tiny free-vision limits — this is Borfoli's real eyes.
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 gemini_client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                       api_key=GEMINI_KEY) if GEMINI_KEY else None
+                       api_key=GEMINI_KEY, timeout=CLIENT_TIMEOUT) if GEMINI_KEY else None
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -982,6 +987,8 @@ def groq_chat(model, messages, max_tokens=1024):
             if _is_rate_limit(e):
                 rate_limited = True
                 _cooldown[(m, prov)] = time.time() + 120
+            else:
+                _cooldown[(m, prov)] = time.time() + 60   # park slow/timing-out models too
             continue                      # any error → next brain
     if rate_limited:
         return "[⚠ Every free model is rate-limited at once — that's rare. Give it a minute and retry, or add a paid ANTHROPIC_API_KEY for unlimited use. I did NOT perform any action.]"
