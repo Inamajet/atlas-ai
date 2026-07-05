@@ -171,16 +171,17 @@ def _weather():
         return _weather_cache["text"]
 
 def get_live_context():
+    # Always Texas time — Mani's in Frisco (Central), regardless of his PC's clock.
     n = _now_central()
     h = n.hour
     part = ("late night" if h < 5 else "early morning" if h < 8 else "morning" if h < 12
             else "afternoon" if h < 17 else "evening" if h < 21 else "night")
     clock = n.strftime("%I:%M %p").lstrip("0")
-    ctx = f"[RIGHT NOW] {n.strftime('%A')}, {n.strftime('%B')} {n.day}, {clock} ({part}) · Frisco, TX"
+    base = f"[RIGHT NOW] {n.strftime('%A')}, {n.strftime('%B')} {n.day}, {clock} ({part}) · Frisco, TX"
     w = _weather()
     if w:
-        ctx += f" · {w}"
-    return ctx
+        base += f" · {w}"
+    return base
 
 def get_os_context():
     if not os_telemetry:
@@ -2047,10 +2048,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;box-
 const DAYS=['SUN','MON','TUE','WED','THU','FRI','SAT'];
 const MONTHS=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 function tick(){
-  const n=new Date();
+  // Always show Texas (Central) time — matches Borfoli's awareness, regardless of PC timezone.
+  const n=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
   const p=x=>String(x).padStart(2,'0');
   document.getElementById('clock-disp').textContent=p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
-  document.getElementById('date-disp').textContent=DAYS[n.getDay()]+' '+p(n.getDate())+' '+MONTHS[n.getMonth()];
+  document.getElementById('date-disp').textContent=DAYS[n.getDay()]+' '+p(n.getDate())+' '+MONTHS[n.getMonth()]+' CT';
 }
 tick();setInterval(tick,1000);
 
