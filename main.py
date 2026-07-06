@@ -77,8 +77,8 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"   # fast + high-limit, stays on Groq for routing
-FAST_MODEL     = "llama-3.3-70b-versatile"   # fast Groq default; waterfalls on any failure
-SYNTH_MODEL    = "llama-3.3-70b-versatile"
+FAST_MODEL     = "gpt-oss-120b"           # Cerebras — strongest free brain (120B), ~o3-mini tier, very fast
+SYNTH_MODEL    = "gpt-oss-120b"
 COUNCIL_MODELS = [
     ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
     ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
@@ -99,15 +99,17 @@ MEGA_CHAIN = [
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — FAST default. Groq Llama-3.3-70b is ~1s and strong.
+    # Tier 1 — PRIMARY: Cerebras gpt-oss-120b (strongest free, ~o3-mini tier, very fast).
+    ("gpt-oss-120b",                                 "cerebras"),
+    ("qwen-3-235b-a22b-instruct-2507",               "cerebras"),   # strong reasoning backup on cerebras
+    # Tier 2 — fast Groq, always-on when Cerebras is exhausted.
     ("llama-3.3-70b-versatile",                      "groq"),
-    ("google/gemini-2.0-flash-exp:free",             "openrouter"),   # fast + smart
-    # Tier 2 — heavier free brains (slower; used only if the fast tier is exhausted).
-    ("nvidia/llama-3.1-nemotron-70b-instruct",       "nvidia"),
+    ("google/gemini-2.0-flash-exp:free",             "openrouter"),
+    # Tier 3 — heavier free brains (slower; only if everything above is down).
     ("deepseek/deepseek-chat-v3-0324:free",          "openrouter"),
     ("qwen/qwen-2.5-72b-instruct:free",              "openrouter"),
     ("meta-llama/llama-3.3-70b-instruct:free",       "openrouter"),
-    # Tier 3 — Groq floor. Always on, high daily limits, sub-second latency.
+    # Tier 4 — Groq floor. Sub-second, high daily limits.
     ("llama-3.1-8b-instant",                         "groq"),
     ("gemma2-9b-it",                                 "groq"),
 ]
@@ -1213,7 +1215,12 @@ def _client_for(provider):
             "anthropic": claude_client, "google": gemini_client,
             "cerebras": cerebras_client}.get(provider)
 
+# Cerebras-hosted model ids that would otherwise be misrouted by the heuristics.
+_CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3-235b-a22b-instruct-2507", "qwen-3-32b",
+                    "zai-glm-4.7", "gemma-4-31b", "llama-4-scout-17b-16e-instruct"}
+
 def _guess_provider(model):
+    if model in _CEREBRAS_MODELS and cerebras_client: return "cerebras"
     if claude_client and model.startswith("claude"): return "anthropic"
     if model.endswith(":free") or model.startswith(("google/", "deepseek/", "meta-llama/", "qwen/", "mistralai/")):
         return "openrouter"
@@ -1225,13 +1232,22 @@ def _is_rate_limit(e):
     s = str(e).lower()
     return "429" in s or "rate limit" in s or "quota" in s or "resource_exhausted" in s
 
+def _clean_out(s):
+    s = THINK_RE.sub("", s or "")
+    # gpt-oss "harmony" format: if channel markers leak, keep only the final channel.
+    if "<|channel|>" in s or "<|message|>" in s:
+        m = re.search(r'final<\|message\|>(.*)', s, re.DOTALL)
+        if m:
+            s = m.group(1)
+        s = re.sub(r'<\|[^|]*\|>', '', s)
+    return s.strip()
+
 def _one_call(model, messages, max_tokens, provider="groq"):
     c = _client_for(provider)
     if c is None:
         raise RuntimeError(f"{provider} not configured")
     r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
-    out = (r.choices[0].message.content or "").strip()
-    return THINK_RE.sub("", out).strip()
+    return _clean_out((r.choices[0].message.content or "").strip())
 
 def groq_chat(model, messages, max_tokens=1024):
     # Waterfall: the caller's preferred model first, then the full MEGA_CHAIN,
