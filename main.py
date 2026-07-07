@@ -77,8 +77,8 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "llama-3.1-8b-instant"   # fast + high-limit, stays on Groq for routing
-FAST_MODEL     = "gpt-oss-120b"           # Cerebras — strongest free brain (120B), ~o3-mini tier, very fast
-SYNTH_MODEL    = "gpt-oss-120b"
+FAST_MODEL     = "gemini-2.5-flash"       # near-Sonnet, fast, native tools+vision (needs valid GEMINI_API_KEY); falls to gpt-oss
+SYNTH_MODEL    = "gemini-2.5-flash"
 COUNCIL_MODELS = [
     ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
     ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
@@ -99,7 +99,9 @@ MEGA_CHAIN = [
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — PRIMARY: Cerebras gpt-oss-120b (strongest free, ~o3-mini tier, very fast).
+    # Tier 1 — PRIMARY: Gemini 2.5 Flash (near-Sonnet, fast) when GEMINI_API_KEY is valid.
+    ("gemini-2.5-flash",                             "google"),
+    # Tier 1b — Cerebras gpt-oss-120b (strongest free, fast) — used if Gemini key missing/maxed.
     ("gpt-oss-120b",                                 "cerebras"),
     ("qwen-3-235b-a22b-instruct-2507",               "cerebras"),   # strong reasoning backup on cerebras
     # Tier 2 — fast Groq, always-on when Cerebras is exhausted.
@@ -1053,9 +1055,10 @@ _TOOL_CHAIN = [
     # ones; Cerebras (gpt-oss-120b) covers Groq's daily limit. Dropped models that 404
     # (wrong id / no tool support) or 413 (too small for the tool payload).
     ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
-    ("llama-3.3-70b-versatile",                 "groq"),
-    ("gpt-oss-120b",                            "cerebras"),    # fast, strong native tool-calling
-    ("qwen-3-32b",                              "cerebras"),    # cerebras backup
+    ("gemini-2.5-flash",                        "google"),      # PRIMARY: near-Sonnet native tools (valid GEMINI key)
+    ("gpt-oss-120b",                            "cerebras"),    # smartest free tool-caller, no Groq daily cap
+    ("llama-3.3-70b-versatile",                 "groq"),        # fast clean-native fallback
+    ("qwen-3-235b-a22b-instruct-2507",          "cerebras"),    # cerebras backup
     ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),  # last-resort
     ("qwen/qwen-2.5-72b-instruct:free",         "openrouter"),
 ]
@@ -1220,6 +1223,7 @@ _CEREBRAS_MODELS = {"gpt-oss-120b", "qwen-3-235b-a22b-instruct-2507", "qwen-3-32
                     "zai-glm-4.7", "gemma-4-31b", "llama-4-scout-17b-16e-instruct"}
 
 def _guess_provider(model):
+    if model.startswith("gemini"): return "google"
     if model in _CEREBRAS_MODELS and cerebras_client: return "cerebras"
     if claude_client and model.startswith("claude"): return "anthropic"
     if model.endswith(":free") or model.startswith(("google/", "deepseek/", "meta-llama/", "qwen/", "mistralai/")):
@@ -1284,9 +1288,9 @@ def groq_chat(model, messages, max_tokens=1024):
 # Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
 # old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
 VISION_CHAIN = [
-    ("meta-llama/llama-4-scout-17b-16e-instruct",     "groq"),    # FAST multimodal, working key
+    ("gemini-2.5-flash",                              "google"),  # BEST screen vision (valid GEMINI key) — accurate click coords
+    ("meta-llama/llama-4-scout-17b-16e-instruct",     "groq"),    # fast multimodal fallback
     ("meta-llama/llama-4-maverick-17b-128e-instruct", "groq"),    # bigger multimodal fallback
-    ("gemini-2.0-flash",                              "google"),  # great, but needs a VALID Gemini key
     ("meta/llama-3.2-11b-vision-instruct",           "nvidia"),   # last-resort (slow)
 ]
 
