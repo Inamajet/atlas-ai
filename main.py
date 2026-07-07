@@ -1212,6 +1212,7 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 # Per-model cooldown: when a model 429s, park it briefly so the next request
 # skips straight to the next brain instead of wasting a round-trip.
 _cooldown = {}   # (model, provider) -> epoch when usable again
+_last_win = {"m": ""}   # last provider/model that answered a chat call (debug)
 
 def _client_for(provider):
     return {"groq": client, "openrouter": or_client, "nvidia": nv_client,
@@ -1272,7 +1273,9 @@ def groq_chat(model, messages, max_tokens=1024):
         if _cooldown.get((m, prov), 0) > now:
             continue                      # still cooling down from a recent 429
         try:
-            return _one_call(m, messages, max_tokens, prov)
+            out = _one_call(m, messages, max_tokens, prov)
+            _last_win["m"] = f"{prov}/{m}"
+            return out
         except Exception as e:
             if _is_rate_limit(e):
                 rate_limited = True
@@ -1577,7 +1580,8 @@ def system_status():
         "mani_os": {"online": mani_online},
         "providers": {"groq": client is not None, "cerebras": cerebras_client is not None,
                       "nvidia": nv_client is not None, "openrouter": or_client is not None,
-                      "anthropic": claude_client is not None},
+                      "anthropic": claude_client is not None, "google": gemini_client is not None},
+        "last_win": _last_win.get("m", ""),
         "tool_err": _last_tool_err.get("e", ""),
         "vault": {"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]), "method": VAULT_INDEX["method"]},
         "identity": {"tagline": "BORN FROM LIGHT",
