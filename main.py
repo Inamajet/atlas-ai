@@ -1704,7 +1704,10 @@ def chat():
     if not msg: return jsonify({"reply": "Say something."})
     facts, history = load_memory()
     # Live situational awareness — Borfoli always knows the time, day, and weather.
-    facts = (get_live_context() + "\n\n" + facts).strip()
+    convo_note = ("[SESSION: this is his FIRST message — one brief greeting is fine, using the correct time of day from [RIGHT NOW] below.]"
+                  if not history else
+                  "[SESSION: continuing conversation — do NOT greet again or restate the time/weather; just answer directly.]")
+    facts = (convo_note + "\n" + get_live_context() + "\n\n" + facts).strip()
     # Ambient recall from his Obsidian notes — fold into `facts` BEFORE routing so
     # every path (fast, council, agent) sees relevant notes. Cheap (lexical, no API).
     vault_ctx = vault_context(msg)
@@ -1766,7 +1769,10 @@ def chat():
 
     if intent == "chitchat":
         sys = JARVIS_PROMPT + ("\n\n" + facts if facts else "")
-        msgs = [{"role": "system", "content": sys}, {"role": "user", "content": msg}]
+        msgs = [{"role": "system", "content": sys}]
+        for h in history[-6:]:           # so he knows it's an ongoing chat (no re-greeting)
+            msgs.append({"role": h["role"], "content": (h.get("content") or "")[:500]})
+        msgs.append({"role": "user", "content": msg})
         reply = groq_chat(FAST_MODEL, msgs, max_tokens=300)
     elif intent in ("search", "browse", "agent"):
         # Agentic loop — real web browsing + dashboard control, chained
