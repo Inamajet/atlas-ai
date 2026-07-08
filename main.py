@@ -341,27 +341,26 @@ def classify_intent(msg, history_snippet):
 
 CATEGORIES:
 - chitchat: hi, hello, thanks, how are you, casual greetings ONLY
-- fast: simple factual lookups, definitions, quick math — ONE sentence answer is enough
-- agent: needs live web info, a URL read, multi-step research, OR asks Borfoli to DO/act — search the web, look something up, find and compare, then take action. Also anything mentioning "mani os", "my dashboard".
-- council: anything requiring depth, judgment, analysis, advice, comparison, explanation, opinion, strategy from what's already known — DEFAULT to this when unsure and no live data / action is needed
-- task: user wants a LONG autonomous DELIVERABLE produced in the background — "write me a full report", "research and write up"
+- fast: the DEFAULT for almost everything — factual lookups, definitions, math, advice, explanations, how-to, opinions, comparisons, planning, decisions. One strong model answers these well and quickly. When unsure and no live data / action is needed → fast.
+- agent: needs live web info, a URL read, OR asks Borfoli to DO/act on his machine — search the web, open/close/lock apps, control his PC, email, or anything mentioning "mani os"/"my dashboard".
+- council: ONLY when he EXPLICITLY wants deep multi-angle deliberation on a weighty decision — "weigh this thoroughly", "war-game this", "give me every angle", "think hard about". Rare.
+- task: user wants a LONG autonomous DELIVERABLE produced in the background — "write me a full report", "research and write up".
 
 EXAMPLES:
 "hi" → chitchat
 "what is VWAP" → fast
-"what can you do" → council
-"what should I focus on" → council
-"explain penetration testing" → council
-"should I do X or Y" → council
-"how does X work" → council
+"explain penetration testing" → fast
+"how does X work" → fast
+"should I do X or Y" → fast
+"what should I focus on" → fast
+"what can you do" → fast
+"war-game my college strategy, every angle" → council
 "research cybersecurity certs and write a full report" → task
 "what's the current ETH price" → agent
-"find me the cheapest flight to austin" → agent
+"focus-lock me into bluebook until I'm done" → agent
+"close discord" → agent
 "look up the best creatine and add it to my tasks" → agent
-"read this page and summarize it https://example.com/article" → agent
-"what does https://example.com say" → agent
 "what's on my mani os" → agent
-"check my dashboard" → agent
 "log my workout and tell me my streak" → agent
 
 Message: {msg}
@@ -1702,15 +1701,18 @@ def chat():
     data = request.json
     msg = data.get("message", "").strip()
     if not msg: return jsonify({"reply": "Say something."})
-    facts, history = load_memory()
-    # Live situational awareness — Borfoli always knows the time, day, and weather.
-    convo_note = ("[SESSION: this is his FIRST message — one brief greeting is fine, using the correct time of day from [RIGHT NOW] below.]"
+    base_facts, history = load_memory()   # base_facts = the PERSISTENT profile/memory (saved back)
+    # Self-heal: strip any transient context that earlier bugs baked into stored memory.
+    base_facts = re.sub(r'^\s*\[(?:RIGHT NOW|SESSION)\b.*$', '', base_facts, flags=re.M)
+    base_facts = re.sub(r"^\s*From Mani'?s (?:own )?notes.*$", '', base_facts, flags=re.M)
+    base_facts = re.sub(r'\n{3,}', '\n\n', base_facts).strip()
+    # Build the per-request context (time, session state, notes) — NOT saved to memory,
+    # so stale timestamps never accumulate in stored facts.
+    convo_note = ("[SESSION: his FIRST message — a brief greeting using the correct time of day (see [RIGHT NOW]) is fine.]"
                   if not history else
-                  "[SESSION: continuing conversation — do NOT greet again or restate the time/weather; just answer directly.]")
-    facts = (convo_note + "\n" + get_live_context() + "\n\n" + facts).strip()
-    # Ambient recall from his Obsidian notes — fold into `facts` BEFORE routing so
-    # every path (fast, council, agent) sees relevant notes. Cheap (lexical, no API).
-    vault_ctx = vault_context(msg)
+                  "[SESSION: CONTINUING conversation — do NOT greet, do NOT say 'Good morning/afternoon', do NOT restate the time or weather. Just answer.]")
+    facts = (convo_note + "\n" + get_live_context() + "\n\n" + base_facts).strip()
+    vault_ctx = vault_context(msg)        # ambient Obsidian recall, per-request only
     if vault_ctx:
         facts = (facts + "\n\n" + vault_ctx).strip()
 
@@ -1728,7 +1730,7 @@ def chat():
             reply = str(action_result)
         history.append({"role": "user", "content": msg})
         history.append({"role": "assistant", "content": reply})
-        save_memory(facts, history)
+        save_memory(base_facts, history)
         return jsonify({"reply": reply, "intent": "action"})
 
     # ── Zero-token PC fast paths (open/screenshot/type) ────────────────────
@@ -1736,7 +1738,7 @@ def chat():
     if pc_result_str is not None:
         history.append({"role": "user", "content": msg})
         history.append({"role": "assistant", "content": pc_result_str})
-        save_memory(facts, history)
+        save_memory(base_facts, history)
         return jsonify({"reply": pc_result_str, "intent": "pc_action"})
 
     # ── Mani OS read queries ───────────────────────────────────────────────
@@ -1748,7 +1750,7 @@ def chat():
         reply = mani_os_read_answer(msg, history, facts)
         history.append({"role": "user", "content": msg})
         history.append({"role": "assistant", "content": reply})
-        save_memory(facts, history)
+        save_memory(base_facts, history)
         return jsonify({"reply": reply, "intent": "mani_read"})
     # ─────────────────────────────────────────────────────────────────────
 
@@ -1794,10 +1796,10 @@ def chat():
         reply = fast_answer(msg, history, facts)
 
     new_fact = extract_facts(msg, reply)
-    if new_fact: facts = (facts + "\n" + new_fact).strip()
+    if new_fact: base_facts = (base_facts + "\n" + new_fact).strip()
     history.append({"role": "user", "content": msg})
     history.append({"role": "assistant", "content": reply})
-    save_memory(facts, history)
+    save_memory(base_facts, history)
     return jsonify({"reply": reply, "intent": intent})
 
 @app.route("/task/<task_id>")
