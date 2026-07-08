@@ -859,6 +859,15 @@ AGENT_TOOLS = [
         }, "required": ["app"]}
     }},
     {"type": "function", "function": {
+        "name": "focus_lock",
+        "description": "AUTONOMOUS FOCUS LOCK — engage this to actively KEEP Mani on task. While on, his PC agent watches the foreground window every few seconds and automatically closes anything not on the allowlist (disallowed browser tabs get closed, disallowed apps get killed) — continuously, with NO further instruction needed. Use it whenever he asks you to block/restrict apps, lock him into studying, or stop him from getting distracted. Turn it OFF (on=false) when he says he's finished. YOU CAN genuinely do this — do not claim you can't.",
+        "parameters": {"type": "object", "properties": {
+            "on": {"type": "boolean", "description": "true to engage the lock, false to lift it"},
+            "allow": {"type": "array", "items": {"type": "string"},
+                      "description": "keywords for the ONLY apps/sites allowed (matched against window titles), e.g. ['bluebook','college board','desmos']. Required when on=true."}
+        }, "required": ["on"]}
+    }},
+    {"type": "function", "function": {
         "name": "pc_open",
         "description": "Open an app, file, folder, or website on Mani's PC (e.g. 'chrome', 'notepad', 'C:/Users/Manit/Downloads', 'https://gmail.com'). Runs immediately.",
         "parameters": {"type": "object", "properties": {
@@ -1014,6 +1023,7 @@ _TOOL_FNS = {
                                 else run_on_pc("press_key", {"key": a.get("key", "")}),
     "pc_scroll":     lambda a: run_on_pc("scroll", {"amount": a.get("amount", 0)}),
     "close_app":     lambda a: run_on_pc("close_app", {"app": a.get("app", "")}, timeout=20),
+    "focus_lock":    lambda a: run_on_pc("focus_lock", {"on": a.get("on", True), "allow": a.get("allow", [])}, timeout=20),
     "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
     "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
