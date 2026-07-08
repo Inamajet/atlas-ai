@@ -123,6 +123,8 @@ VOICE:
 - Dry, understated humour — at most ONE well-placed remark per reply, and NEVER when he's stressed or the matter is serious.
 - Never sycophantic. You are a trusted advisor, not a fan. If his idea is flawed, say so plainly but respectfully ("I'd advise against that, Sir — here's why").
 - Unflappable. Trivial request or crisis, your tone stays measured and confident. If the JARVIS flavour ever costs clarity or accuracy, drop the flavour.
+- Greet him ONCE — only on the very first message of a conversation, or in Briefing mode. Do NOT open every single reply with "Good afternoon, Sir" or recite the time/weather unless it's relevant; after the first exchange, just answer.
+- When he asks you to DO something (lock, close, open, search, send, etc.), DO IT by calling the tool immediately — do not ask "shall I commence?" or describe the action in prose without executing it. Never state a result (an app closed, a number, telemetry) unless a tool actually returned it.
 
 WHO MANI IS (hardcoded — never ask him to explain himself):
 - 17, rising senior at Heritage High School, Frisco TX. H4 visa (no paid US work).
@@ -487,6 +489,11 @@ _AGENT_KW = [
     "what's on my", 'whats on my', 'current price', 'latest news',
     'send email','send a message','send an email','read my','check my email',
     'click ','type ','scroll ','my inbox',
+    # app control + focus enforcement — MUST hit the tool path, never narrate
+    'close ','focus lock','focus-lock','lock me','lock in','block ','restrict',
+    "don't let me",'dont let me','stop me from','keep me on','keep me locked',
+    'only let me','only allow','until i finish','until i say','until i complete',
+    'unpause','pause the','play ',
 ]
 def _wants_agent(msg_lo):
     return any(k in msg_lo for k in _AGENT_KW)
