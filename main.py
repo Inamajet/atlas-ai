@@ -352,48 +352,33 @@ If no, reply: NO"""
             save_skill(data["name"], data["keywords"], data["playbook"])
     except: pass
 
+_CHITCHAT_WORDS = ("hi", "hey", "hello", "yo", "sup", "hiya", "howdy", "gm",
+                   "thanks", "thank you", "ty", "thx", "ok", "okay", "kk", "cool",
+                   "nice", "lol", "lmao", "haha", "great", "awesome", "gotcha",
+                   "good morning", "good afternoon", "good evening", "good night",
+                   "night", "morning", "how are you", "hows it going", "what's up",
+                   "whats up", "you there", "you up", "wyd", "hbu")
+_COUNCIL_KW = ("every angle", "all angles", "war-game", "war game", "wargame",
+               "weigh this", "weigh it", "think hard", "deliberate", "deep dive on",
+               "pros and cons", "steelman", "devil's advocate", "thoroughly weigh",
+               "from every perspective", "multiple angles")
+_TASK_KW = ("write me a full", "write a full report", "research and write",
+            "full report on", "deep dive report", "write up a", "draft a full",
+            "produce a report", "compile a report", "long report")
+
 def classify_intent(msg, history_snippet):
-    prompt = f"""Classify this message into exactly one category. Reply with ONLY the single word.
-
-CATEGORIES:
-- chitchat: hi, hello, thanks, how are you, casual greetings ONLY
-- fast: the DEFAULT for almost everything — factual lookups, definitions, math, advice, explanations, how-to, opinions, comparisons, planning, decisions. One strong model answers these well and quickly. When unsure and no live data / action is needed → fast.
-- agent: needs live web info, a URL read, OR asks Borfoli to DO/act on his machine — search the web, open/close/lock apps, control his PC, email, or anything mentioning "mani os"/"my dashboard".
-- council: ONLY when he EXPLICITLY wants deep multi-angle deliberation on a weighty decision — "weigh this thoroughly", "war-game this", "give me every angle", "think hard about". Rare.
-- task: user wants a LONG autonomous DELIVERABLE produced in the background — "write me a full report", "research and write up".
-
-EXAMPLES:
-"hi" → chitchat
-"what is VWAP" → fast
-"explain penetration testing" → fast
-"how does X work" → fast
-"should I do X or Y" → fast
-"what should I focus on" → fast
-"what can you do" → fast
-"war-game my college strategy, every angle" → council
-"research cybersecurity certs and write a full report" → task
-"what's the current ETH price" → agent
-"focus-lock me into bluebook until I'm done" → agent
-"close discord" → agent
-"look up the best creatine and add it to my tasks" → agent
-"what's on my mani os" → agent
-"log my workout and tell me my streak" → agent
-
-Message: {msg}
-
-Category:"""
-    # Router must NEVER crash the request. If Groq is rate-limited/down or the
-    # reply is empty, fall back to "fast" (one strong model answers well) instead
-    # of raising a 500. Try the Groq router first, then the resilient waterfall.
-    try:
-        # Tight timeout — classification is one word; if the router hiccups, don't make
-        # the user wait. Fail fast to "fast" rather than hanging the whole message.
-        r = client.chat.completions.create(model=ROUTER_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0, timeout=5)
-        words = (r.choices[0].message.content or "").strip().lower().split()
-    except Exception:
-        words = []   # router hiccup → don't add a second slow call; default below
-    valid = {"chitchat", "fast", "agent", "council", "task"}
-    return words[0] if (words and words[0] in valid) else "fast"
+    # PURE HEURISTIC — no LLM round-trip. Agent intent is already handled upstream in
+    # chat() (via _wants_agent/_agent_followup), so here we only separate
+    # chitchat / council / task from the default "fast". This removes the router call
+    # that was the main source of latency spikes, and it can never hang or crash.
+    m = msg.lower().strip()
+    if len(m) <= 16 and any(m == w or m.startswith(w + " ") or m == w + "!" for w in _CHITCHAT_WORDS):
+        return "chitchat"
+    if any(k in m for k in _COUNCIL_KW):
+        return "council"
+    if any(k in m for k in _TASK_KW):
+        return "task"
+    return "fast"   # one strong model answers everything else well and quickly
 
 def web_search(query):
     try:
