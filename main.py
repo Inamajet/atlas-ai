@@ -1090,11 +1090,11 @@ _TOOL_FNS = {
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
     "search_notes":  lambda a: _tool_search_notes(a.get("query", ""), a.get("k", 5)),
-    "browse_open":   lambda a: run_on_pc("browser_open", {"url": a.get("url", "")}, timeout=45),
-    "browse_look":   lambda a: run_on_pc("browser_look", {}, timeout=25),
-    "browse_click":  lambda a: run_on_pc("browser_click", {"ref": a.get("ref")}, timeout=30),
-    "browse_type":   lambda a: run_on_pc("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
-    "browse_scroll": lambda a: run_on_pc("browser_scroll", {"amount": a.get("amount", 600)}, timeout=25),
+    "browse_open":   lambda a: run_on_browser("browser_open", {"url": a.get("url", "")}, timeout=45),
+    "browse_look":   lambda a: run_on_browser("browser_look", {}, timeout=25),
+    "browse_click":  lambda a: run_on_browser("browser_click", {"ref": a.get("ref")}, timeout=30),
+    "browse_type":   lambda a: run_on_browser("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
+    "browse_scroll": lambda a: run_on_browser("browser_scroll", {"amount": a.get("amount", 600)}, timeout=25),
 }
 
 AGENT_INSTRUCTIONS = (
@@ -1796,6 +1796,7 @@ def system_status():
                    "nvidia": nv_client is not None, "claude": claude_client is not None,
                    "vision": "Groq Llama-4 Scout", "list": active},
         "agent": agent,
+        "extension": ext_online(),
         "mani_os": {"online": mani_online},
         "providers": {"groq": client is not None, "cerebras": cerebras_client is not None,
                       "nvidia": nv_client is not None, "openrouter": or_client is not None,
@@ -1874,6 +1875,67 @@ def diag():
 
 pc_commands = {}   # id -> {id, action, args, status, result, ts}
 pc_queue = []      # ids awaiting pickup
+
+# ── Browser EXTENSION bridge ─────────────────────────────────────────────────────
+# The Borfoli browser extension runs INSIDE Mani's real browser (real profile, real
+# logins, the tab he's on). It polls /ext/poll for commands and posts to /ext/result.
+# When it's connected, browser actions use it (the real browser) instead of the local
+# agent's separate Chromium.
+ext_commands = {}
+ext_queue = []
+_ext_last_seen = {"t": 0}
+
+def ext_online():
+    return (time.time() - _ext_last_seen["t"]) < 15
+
+def run_on_ext(action, args, timeout=40):
+    cid = uuid.uuid4().hex[:8]
+    ext_commands[cid] = {"id": cid, "action": action, "args": args,
+                         "status": "queued", "result": None, "ts": time.time()}
+    ext_queue.append(cid)
+    start = time.time()
+    while time.time() - start < timeout:
+        c = ext_commands.get(cid)
+        if c and c["status"] == "done":
+            return c["result"]
+        time.sleep(0.6)
+    if cid in ext_commands:
+        ext_commands[cid]["status"] = "expired"
+    return "The browser extension didn't respond — is it installed and is a normal tab open?"
+
+def run_on_browser(action, args, timeout=45):
+    """Prefer the real-browser EXTENSION; fall back to the local agent's Chromium."""
+    if ext_online():
+        return run_on_ext(action, args, timeout=min(timeout, 40))
+    return run_on_pc(action, args, timeout=timeout)
+
+@app.route("/ext/poll")
+def ext_poll():
+    _ext_last_seen["t"] = time.time()
+    out = []
+    for cid in list(ext_queue):
+        c = ext_commands.get(cid)
+        if c and c["status"] == "queued":
+            c["status"] = "sent"
+            out.append({"id": c["id"], "action": c["action"], "args": c["args"]})
+        if c and c["status"] in ("done", "expired", "sent") and (time.time() - c["ts"]) > 120:
+            ext_queue.remove(cid); ext_commands.pop(cid, None)
+    return jsonify({"commands": out})
+
+@app.route("/ext/result", methods=["POST"])
+def ext_result():
+    _ext_last_seen["t"] = time.time()
+    d = request.json or {}
+    c = ext_commands.get(d.get("id"))
+    if c:
+        c["status"] = "done"
+        c["result"] = d.get("result", "")
+    return jsonify({"ok": True})
+
+@app.route("/ext/ping", methods=["GET", "POST"])
+def ext_ping():
+    _ext_last_seen["t"] = time.time()
+    return jsonify({"ok": True})
 
 def run_on_pc(action, args, timeout=50):
     """Queue an action for the local agent and wait for its result."""
@@ -2782,10 +2844,15 @@ async function loadSystem(){
     $('core-pct').textContent=pct+'%';
     // bridge
     if(a.online){$('br-st').className='st on';$('br-st').textContent='DESKTOP AGENT LIVE'+(a.active_window?' · '+String(a.active_window).slice(0,32):'')+(a.cpu!=null?' · CPU '+Math.round(a.cpu)+'%':'');
-      $('br-r').textContent='LIVE';$('bridge-ind').className='live';$('bridge-ind').textContent='◈ BRIDGE LIVE';
-      const bm={'real':'◈ BROWSER · attached to your real browser (Edge)','real-ready':'◈ BROWSER · your Edge ready (port 9222)','sandbox':'◇ BROWSER · sandbox window (own profile)','sandbox-only':'◇ BROWSER · sandbox only — run Start Borfoli.bat for real-browser control','unknown':''}[a.browser]||'';
-      const be=$('br-browser');if(be){be.textContent=bm;be.style.color=(a.browser&&a.browser.indexOf('real')===0)?'var(--green)':'var(--amber)';}}
-    else{$('br-st').className='st off';$('br-st').textContent='NO DESKTOP AGENT DETECTED';$('br-r').textContent='OFFLINE';$('bridge-ind').className='off';$('bridge-ind').textContent='◇ BRIDGE OFFLINE';const be=$('br-browser');if(be)be.textContent='';}
+      $('br-r').textContent='LIVE';$('bridge-ind').className='live';$('bridge-ind').textContent='◈ BRIDGE LIVE';}
+    else{$('br-st').className='st off';$('br-st').textContent='NO DESKTOP AGENT DETECTED';$('br-r').textContent='OFFLINE';$('bridge-ind').className='off';$('bridge-ind').textContent='◇ BRIDGE OFFLINE';}
+    // browser-mode line — extension (your real browser) wins; independent of the PC agent
+    const be=$('br-browser');
+    if(be){
+      if(d.extension){be.textContent='◈ BROWSER · your real browser (extension live)';be.style.color='var(--green)';}
+      else if(a.online){const bm={'real':'◈ BROWSER · attached to your real browser (Edge)','real-ready':'◈ BROWSER · your Edge ready (port 9222)','sandbox':'◇ BROWSER · sandbox window (own profile)','sandbox-only':'◇ BROWSER · no extension — install the Borfoli Bridge, or run Start Borfoli.bat','unknown':''}[a.browser]||'◇ BROWSER · install the Borfoli Bridge extension for real-browser control';be.textContent=bm;be.style.color=(a.browser&&a.browser.indexOf('real')===0)?'var(--green)':'var(--amber)';}
+      else{be.textContent='◇ BROWSER · install the Borfoli Bridge extension to control this browser';be.style.color='var(--amber)';}
+    }
     // capability matrix
     const claude=p.anthropic;
     const rows=[
@@ -2795,7 +2862,7 @@ async function loadSystem(){
      ['Memory','Persistent, auto-captured',''],
      ['Vision','Upload a screen, JARVIS reads it',''],
      ['Desktop',a.online?'Bridge LIVE — apps, files, shell':'Bridge agent (offline)',a.online?'ok':'warn'],
-     ['Browser',a.online?((a.browser&&a.browser.indexOf('real')===0)?'Your real browser (Edge) — attached':'Sandbox window (own profile)'):'Bridge offline',a.online?((a.browser&&a.browser.indexOf('real')===0)?'ok':'warn'):'warn'],
+     ['Browser',d.extension?'Your real browser — extension live':(a.online?((a.browser&&a.browser.indexOf('real')===0)?'Your real browser (Edge)':'Sandbox window'):'Install the Borfoli Bridge extension'),d.extension?'ok':(a.online&&a.browser&&a.browser.indexOf('real')===0?'ok':'warn')],
      ['Voice','Browser speech in and out',''],
     ];
     $('cap').innerHTML=rows.map(r=>`<div class="cap-row"><span class="k">${r[0]}</span><span class="v ${r[2]}">${esc(r[1])}</span></div>`).join('');
