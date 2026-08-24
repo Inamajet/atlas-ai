@@ -2772,7 +2772,7 @@ async function loadSystem(){
     // bridge
     if(a.online){$('br-st').className='st on';$('br-st').textContent='DESKTOP AGENT LIVE'+(a.active_window?' · '+String(a.active_window).slice(0,32):'')+(a.cpu!=null?' · CPU '+Math.round(a.cpu)+'%':'');
       $('br-r').textContent='LIVE';$('bridge-ind').className='live';$('bridge-ind').textContent='◈ BRIDGE LIVE';
-      const bm={'real':'◈ BROWSER · attached to your real Chrome','real-ready':'◈ BROWSER · your Chrome ready (port 9222)','sandbox':'◇ BROWSER · sandbox window (own profile)','sandbox-only':'◇ BROWSER · sandbox only — run Start Borfoli.bat for real-Chrome control','unknown':''}[a.browser]||'';
+      const bm={'real':'◈ BROWSER · attached to your real browser (Edge)','real-ready':'◈ BROWSER · your Edge ready (port 9222)','sandbox':'◇ BROWSER · sandbox window (own profile)','sandbox-only':'◇ BROWSER · sandbox only — run Start Borfoli.bat for real-browser control','unknown':''}[a.browser]||'';
       const be=$('br-browser');if(be){be.textContent=bm;be.style.color=(a.browser&&a.browser.indexOf('real')===0)?'var(--green)':'var(--amber)';}}
     else{$('br-st').className='st off';$('br-st').textContent='NO DESKTOP AGENT DETECTED';$('br-r').textContent='OFFLINE';$('bridge-ind').className='off';$('bridge-ind').textContent='◇ BRIDGE OFFLINE';const be=$('br-browser');if(be)be.textContent='';}
     // capability matrix
@@ -2784,7 +2784,7 @@ async function loadSystem(){
      ['Memory','Persistent, auto-captured',''],
      ['Vision','Upload a screen, JARVIS reads it',''],
      ['Desktop',a.online?'Bridge LIVE — apps, files, shell':'Bridge agent (offline)',a.online?'ok':'warn'],
-     ['Browser',a.online?((a.browser&&a.browser.indexOf('real')===0)?'Your real Chrome — attached':'Sandbox window (own profile)'):'Bridge offline',a.online?((a.browser&&a.browser.indexOf('real')===0)?'ok':'warn'):'warn'],
+     ['Browser',a.online?((a.browser&&a.browser.indexOf('real')===0)?'Your real browser (Edge) — attached':'Sandbox window (own profile)'):'Bridge offline',a.online?((a.browser&&a.browser.indexOf('real')===0)?'ok':'warn'):'warn'],
      ['Voice','Browser speech in and out',''],
     ];
     $('cap').innerHTML=rows.map(r=>`<div class="cap-row"><span class="k">${r[0]}</span><span class="v ${r[2]}">${esc(r[1])}</span></div>`).join('');
