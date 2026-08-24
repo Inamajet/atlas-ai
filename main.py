@@ -373,8 +373,22 @@ EXAMPLES:
 Message: {msg}
 
 Category:"""
-    r = client.chat.completions.create(model=ROUTER_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0)
-    return r.choices[0].message.content.strip().lower().split()[0]
+    # Router must NEVER crash the request. If Groq is rate-limited/down or the
+    # reply is empty, fall back to "fast" (one strong model answers well) instead
+    # of raising a 500. Try the Groq router first, then the resilient waterfall.
+    try:
+        r = client.chat.completions.create(model=ROUTER_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0)
+        words = (r.choices[0].message.content or "").strip().lower().split()
+    except Exception:
+        try:
+            out = groq_chat(ROUTER_MODEL, [{"role": "user", "content": prompt}], max_tokens=10)
+            words = (out or "").strip().lower().split()
+            if words and words[0].startswith("["):   # a fallback notice, not a real category
+                words = []
+        except Exception:
+            words = []
+    valid = {"chitchat", "fast", "agent", "council", "task"}
+    return words[0] if (words and words[0] in valid) else "fast"
 
 def web_search(query):
     try:
