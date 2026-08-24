@@ -2031,7 +2031,18 @@ def greeting():
               f"{wx_rule}"
               "Match the greeting to the REAL hour (late/night → note he's up late, never 'good morning' at night). "
               "No emojis, no markdown, no 'how can I help'.")
-    reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110)
+    reply = (groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=110) or "").strip()
+    # Never return a blank/fallback greeting — synthesize a deterministic one from the
+    # real hour so the HUD always has something to say (gpt-oss occasionally emits only
+    # reasoning, which cleans to empty; and every model may be momentarily unavailable).
+    if not reply or reply.startswith("["):
+        n = _now_central(); h = n.hour
+        tod = ("Burning the midnight oil, Sir." if h < 5 else
+               "Good morning, Sir." if h < 12 else
+               "Good afternoon, Sir." if h < 17 else
+               "Good evening, Sir.")
+        wx = _weather_cache.get("text", "")
+        reply = f"{tod} Borfoli online" + (f" — {wx} in Frisco." if wx else ".") + " Standing by."
     return jsonify({"greeting": reply, "context": live,
                     "wx": _weather_cache.get("text", ""), "wx_err": _weather_cache.get("err", "")})
 
