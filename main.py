@@ -1768,6 +1768,7 @@ def system_status():
         agent = {"online": True, "cpu": os_telemetry.get("cpu"), "ram": os_telemetry.get("ram"),
                  "disk": os_telemetry.get("disk"), "active_window": os_telemetry.get("active_window"),
                  "uptime_hours": os_telemetry.get("uptime_hours"),
+                 "browser": os_telemetry.get("browser", "unknown"),
                  "top": [p.get("name") for p in (os_telemetry.get("top_processes") or [])[:3]]}
     mani_online = False
     try:
@@ -2594,6 +2595,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
       <div class="lbl">⚙ SYSTEM BRIDGE <span class="r" id="br-r">OFFLINE</span></div>
       <div class="bridge">
         <div class="st off" id="br-st">NO DESKTOP AGENT DETECTED</div>
+        <div id="br-browser" style="font-family:var(--mono);font-size:8px;letter-spacing:.1em;margin:-4px 0 10px;color:var(--dim)"></div>
         <div class="brow">
           <button class="blink" id="br-link">⤓ Link my PC</button>
           <select id="br-kind"><option value="open_url">Open URL</option><option value="open">Open app / path</option><option value="run_shell">Run shell</option></select>
@@ -2769,8 +2771,10 @@ async function loadSystem(){
     $('core-pct').textContent=pct+'%';
     // bridge
     if(a.online){$('br-st').className='st on';$('br-st').textContent='DESKTOP AGENT LIVE'+(a.active_window?' · '+String(a.active_window).slice(0,32):'')+(a.cpu!=null?' · CPU '+Math.round(a.cpu)+'%':'');
-      $('br-r').textContent='LIVE';$('bridge-ind').className='live';$('bridge-ind').textContent='◈ BRIDGE LIVE';}
-    else{$('br-st').className='st off';$('br-st').textContent='NO DESKTOP AGENT DETECTED';$('br-r').textContent='OFFLINE';$('bridge-ind').className='off';$('bridge-ind').textContent='◇ BRIDGE OFFLINE';}
+      $('br-r').textContent='LIVE';$('bridge-ind').className='live';$('bridge-ind').textContent='◈ BRIDGE LIVE';
+      const bm={'real':'◈ BROWSER · attached to your real Chrome','real-ready':'◈ BROWSER · your Chrome ready (port 9222)','sandbox':'◇ BROWSER · sandbox window (own profile)','sandbox-only':'◇ BROWSER · sandbox only — run Start Borfoli.bat for real-Chrome control','unknown':''}[a.browser]||'';
+      const be=$('br-browser');if(be){be.textContent=bm;be.style.color=(a.browser&&a.browser.indexOf('real')===0)?'var(--green)':'var(--amber)';}}
+    else{$('br-st').className='st off';$('br-st').textContent='NO DESKTOP AGENT DETECTED';$('br-r').textContent='OFFLINE';$('bridge-ind').className='off';$('bridge-ind').textContent='◇ BRIDGE OFFLINE';const be=$('br-browser');if(be)be.textContent='';}
     // capability matrix
     const claude=p.anthropic;
     const rows=[
@@ -2780,6 +2784,7 @@ async function loadSystem(){
      ['Memory','Persistent, auto-captured',''],
      ['Vision','Upload a screen, JARVIS reads it',''],
      ['Desktop',a.online?'Bridge LIVE — apps, files, shell':'Bridge agent (offline)',a.online?'ok':'warn'],
+     ['Browser',a.online?((a.browser&&a.browser.indexOf('real')===0)?'Your real Chrome — attached':'Sandbox window (own profile)'):'Bridge offline',a.online?((a.browser&&a.browser.indexOf('real')===0)?'ok':'warn'):'warn'],
      ['Voice','Browser speech in and out',''],
     ];
     $('cap').innerHTML=rows.map(r=>`<div class="cap-row"><span class="k">${r[0]}</span><span class="v ${r[2]}">${esc(r[1])}</span></div>`).join('');
