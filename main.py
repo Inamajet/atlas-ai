@@ -1979,27 +1979,17 @@ def chat():
         save_memory(base_facts, history)
         return jsonify({"reply": pc_result_str, "intent": "pc_action"})
 
-    # ── Mani OS read queries ───────────────────────────────────────────────
     msg_lo = msg.lower()
-    _mani_data_kw = ['calories','protein','weight','task','workout','streak',
-                     'water','pull','trade','lore','net worth','check','supp']
-    if (any(k in msg_lo for k in MANI_OS_TRIGGERS) or
-            (any(k in msg_lo for k in _MANI_READ_KW) and any(k in msg_lo for k in _mani_data_kw))):
-        reply = mani_os_read_answer(msg, history, facts)
-        history.append({"role": "user", "content": msg})
-        history.append({"role": "assistant", "content": reply})
-        save_memory(base_facts, history)
-        return jsonify({"reply": reply, "intent": "mani_read"})
-    # ─────────────────────────────────────────────────────────────────────
 
-    # ── Gmail READ + Discord WATCH — go straight to the reader, not the tool loop ──
+    # ── Gmail READ + Discord WATCH — go straight to the reader, not the tool loop.
+    # (Runs BEFORE the Mani-OS route: "check my email" must not be caught by "check".)
     _email_read = any(k in msg_lo for k in ("my email", "my inbox", "check email", "check my mail",
                                             "check my email", "read my email", "read my mail", "unread",
                                             "new emails", "any emails", "my mail", "sponsorship email",
-                                            "scan my email", "anything important in my", "who emailed"))
+                                            "scan my email", "who emailed", "emails today"))
     _discord_read = any(k in msg_lo for k in ("my discord", "discord server", "in discord", "on discord",
-                                              "discord channel", "my server", "the communities", "what's new in discord",
-                                              "whats new in discord", "check discord", "watch discord"))
+                                              "discord channel", "my server", "the communities", "check discord",
+                                              "what's new in discord", "whats new in discord", "watch discord"))
     if _email_read and not any(k in msg_lo for k in ("send", "compose", "write an email", "reply to", "draft")):
         reply = check_email_answer(msg, history, facts)
         history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
@@ -2010,6 +2000,18 @@ def chat():
         history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
         save_memory(base_facts, history)
         return jsonify({"reply": reply, "intent": "discord"})
+
+    # ── Mani OS read queries ───────────────────────────────────────────────
+    _mani_data_kw = ['calories','protein','weight','task','workout','streak',
+                     'water','pull','trade','lore','net worth','check','supp']
+    if (any(k in msg_lo for k in MANI_OS_TRIGGERS) or
+            (any(k in msg_lo for k in _MANI_READ_KW) and any(k in msg_lo for k in _mani_data_kw))):
+        reply = mani_os_read_answer(msg, history, facts)
+        history.append({"role": "user", "content": msg})
+        history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "mani_read"})
+    # ─────────────────────────────────────────────────────────────────────
 
     # Deterministic route: email/PC/browser/web requests ALWAYS use the agent's
     # real tools — never the text-only paths that refuse or hallucinate.
