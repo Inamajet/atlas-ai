@@ -2673,7 +2673,7 @@ function toggleVoice(){
 }
 
 // ── TTS (realistic: ElevenLabs server voice, fallback to best browser voice) ──
-let ttsEnabled=false,ttsVoice=null,serverTTS=null,ttsAudio=null;
+let ttsEnabled=true,ttsVoice=null,serverTTS=null,ttsAudio=null;
 function initVoices(){
   const vs=speechSynthesis.getVoices();
   if(!vs.length)return;
@@ -2707,6 +2707,8 @@ function buildVoicePicker(pool){
     speechSynthesis.cancel();speechSynthesis.speak(u);};
 }
 if(window.speechSynthesis){speechSynthesis.onvoiceschanged=initVoices;initVoices();}
+// TTS on by default — reflect it on the button so Borfoli speaks like a person out of the box
+{const _tb=document.getElementById('tts-btn');if(_tb&&ttsEnabled)_tb.classList.add('active');}
 function stripMd(text){
   return text.replace(/#{1,6}\s/g,'').replace(/\*\*(.*?)\*\*/g,'$1').replace(/\*(.*?)\*/g,'$1')
     .replace(/`[^`]+`/g,'').replace(/\[([^\]]+)\]\([^)]+\)/g,'$1').replace(/https?:\/\/\S+/g,'')
