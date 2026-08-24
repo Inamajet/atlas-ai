@@ -1660,6 +1660,22 @@ def system_status():
                      "directives": ["arXiv CYBERSEC PAPER", "SAT 1500+", "14% BF CUT", "MANI OS"]},
     })
 
+@app.route("/models")
+def list_models():
+    """Ground truth: the model ids each working provider ACTUALLY offers right now."""
+    out = {}
+    for prov in ("groq", "nvidia", "openrouter", "cerebras", "google"):
+        c = _client_for(prov)
+        if c is None:
+            out[prov] = "no client"
+            continue
+        try:
+            ids = sorted(m.id for m in c.models.list().data)
+            out[prov] = ids
+        except Exception as e:
+            out[prov] = f"ERR: {str(e)[:120]}"
+    return jsonify(out)
+
 @app.route("/diag")
 def diag():
     """Live per-provider health — actually calls each provider (bypassing cooldown)
