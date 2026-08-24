@@ -510,11 +510,14 @@ _AGENT_KW = [
     "what's on my", 'whats on my', 'current price', 'latest news',
     'send email','send a message','send an email','read my','check my email',
     'click ','type ','scroll ','my inbox',
-    # app control + focus enforcement — MUST hit the tool path, never narrate
-    'close ','focus lock','focus-lock','lock me','lock in','block ','restrict',
+    # app control + focus enforcement — MUST hit the tool path, never narrate.
+    # Keep these SPECIFIC: bare words like 'block ' / 'play ' matched innocent phrases
+    # ("training block", "player") and dragged chit-chat into the slow agent loop.
+    'close ','focus lock','focus-lock','lock me in','block distract','block app',
+    'block websit','block social','block youtube','restrict my',
     "don't let me",'dont let me','stop me from','keep me on','keep me locked',
-    'only let me','only allow','until i finish','until i say','until i complete',
-    'unpause','pause the','play ',
+    'only let me','only allow','until i finish','until i complete',
+    'unpause','pause the','play music','play spotify','play my',
 ]
 def _wants_agent(msg_lo):
     return any(k in msg_lo for k in _AGENT_KW)
@@ -1897,10 +1900,11 @@ def chat():
     else:
         reply = fast_answer(msg, history, facts)
 
-    # Never return a blank reply. If a path (esp. the agent/tool loop, or a harmony-format
-    # model that cleaned to nothing) produced empty text, regenerate through the clean
-    # fast path; if even that is empty, give a graceful line instead of silence.
-    if not (reply or "").strip() or (reply or "").strip().startswith("["):
+    # Never return a blank reply. Only regenerate for the AGENT/COUNCIL/NOTES paths that
+    # can legitimately come back empty (a tool loop that produced no prose). The fast/
+    # chitchat paths already ran the full model chain, so re-running it would just double
+    # the latency for no gain — if that came back as a fallback notice, keep it.
+    if intent in ("agent", "council", "notes") and (not (reply or "").strip() or (reply or "").strip().startswith("[")):
         alt = fast_answer(msg, history, facts)
         if (alt or "").strip() and not alt.strip().startswith("["):
             reply, intent = alt, "fast"
