@@ -85,6 +85,15 @@ TAVILY_KEY = os.environ.get("TAVILY_KEY")
 RESEND_KEY = os.environ.get("RESEND_KEY")
 USER_EMAIL = "manitejamaram1@gmail.com"
 
+# ── Gmail (read) via IMAP + a Google App Password (simpler than OAuth). Add in Render:
+#    GMAIL_ADDRESS = your gmail, GMAIL_APP_PASSWORD = a 16-char app password (myaccount.google.com/apppasswords).
+GMAIL_ADDR   = os.environ.get("GMAIL_ADDRESS", USER_EMAIL)
+GMAIL_APP_PW = os.environ.get("GMAIL_APP_PASSWORD", "")
+# ── Discord watch via a bot token (REST polling). Add: DISCORD_BOT_TOKEN and
+#    DISCORD_CHANNELS = comma-separated channel IDs to watch.
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+DISCORD_CHANNELS  = [c.strip() for c in os.environ.get("DISCORD_CHANNELS", "").split(",") if c.strip()]
+
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "openai/gpt-oss-20b"     # fast Groq model, valid id, routes via "openai/gpt-oss" prefix
@@ -1524,6 +1533,110 @@ def send_email(subject, body):
                   "html": f"<pre style='font-family:sans-serif;white-space:pre-wrap'>{body}</pre>"})
     except: pass
 
+# ── Gmail READING (IMAP) — Borfoli's inbox eyes ──────────────────────────────────
+def fetch_recent_emails(limit=10, unread_only=False):
+    """Read recent Gmail over IMAP with a Google App Password. Returns list[dict],
+    None if not configured, or {'error': ...} on failure."""
+    if not GMAIL_APP_PW:
+        return None
+    import imaplib, email
+    from email.header import decode_header
+    def _dec(v):
+        if not v: return ""
+        try:
+            return "".join((p.decode(enc or "utf-8", "ignore") if isinstance(p, bytes) else p)
+                           for p, enc in decode_header(v))
+        except Exception:
+            return str(v)
+    out = []
+    try:
+        M = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15)
+        M.login(GMAIL_ADDR, GMAIL_APP_PW)
+        M.select("INBOX")
+        typ, data = M.search(None, "UNSEEN" if unread_only else "ALL")
+        ids = data[0].split()[-limit:][::-1]
+        for i in ids:
+            typ, md = M.fetch(i, "(RFC822)")
+            if not md or not md[0]:
+                continue
+            m = email.message_from_bytes(md[0][1])
+            body = ""
+            if m.is_multipart():
+                for part in m.walk():
+                    if part.get_content_type() == "text/plain":
+                        try:
+                            body = part.get_payload(decode=True).decode("utf-8", "ignore"); break
+                        except Exception: pass
+            else:
+                try: body = m.get_payload(decode=True).decode("utf-8", "ignore")
+                except Exception: pass
+            out.append({
+                "from": _dec(m.get("From"))[:120],
+                "subject": _dec(m.get("Subject"))[:160],
+                "snippet": " ".join((body or "").split())[:220],
+                "date": (m.get("Date", "") or "")[:31],
+            })
+        M.logout()
+        return out
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+def check_email_answer(msg, history, facts):
+    unread = any(w in msg.lower() for w in ("unread", "new email", "new mail", "unseen"))
+    emails = fetch_recent_emails(limit=12, unread_only=unread)
+    if emails is None:
+        return ("Your inbox isn't linked yet, Sir. Add **GMAIL_ADDRESS** and a Google **App Password** "
+                "(GMAIL_APP_PASSWORD, from myaccount.google.com/apppasswords) in Render, and I'll read it for you.")
+    if isinstance(emails, dict) and emails.get("error"):
+        return f"I couldn't reach your inbox, Sir — {emails['error']}. (Check the app password and that IMAP is enabled in Gmail.)"
+    if not emails:
+        return "Your inbox is clear, Sir — nothing new to report."
+    listing = "\n".join(f"- FROM {e['from']} | SUBJ {e['subject']} | {e['snippet']}" for e in emails)
+    prompt = (f"{JARVIS_PROMPT}\n\n{facts}\n\nMani asked: \"{msg}\"\n\nHis recent emails:\n{listing}\n\n"
+              "Brief him like a chief of staff: lead with what MATTERS — sponsorship/opportunity emails, anything "
+              "needing a reply or follow-up, deadlines, important senders. Note which deserve an answer. Dismiss the "
+              "junk in one line. Be concise and specific. Do NOT invent emails not in the list above.")
+    return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
+
+# ── Discord WATCH (REST polling) ─────────────────────────────────────────────────
+def fetch_discord_messages(per_channel=12):
+    """Pull recent messages from each watched channel via the bot token. Returns
+    list[dict], None if not configured, or {'error': ...}."""
+    if not DISCORD_BOT_TOKEN or not DISCORD_CHANNELS:
+        return None
+    out = []
+    try:
+        for ch in DISCORD_CHANNELS[:6]:
+            r = requests.get(f"https://discord.com/api/v10/channels/{ch}/messages?limit={per_channel}",
+                             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}, timeout=12)
+            if r.status_code == 200:
+                for m in r.json():
+                    c = (m.get("content") or "").strip()
+                    if c:
+                        out.append({"channel": ch,
+                                    "author": (m.get("author") or {}).get("username", "?"),
+                                    "content": c[:280]})
+            elif r.status_code in (401, 403):
+                return {"error": f"bot lacks access to channel {ch} (status {r.status_code})"}
+        return out
+    except Exception as e:
+        return {"error": str(e)[:160]}
+
+def check_discord_answer(msg, history, facts):
+    msgs = fetch_discord_messages()
+    if msgs is None:
+        return ("Discord isn't linked yet, Sir. Add **DISCORD_BOT_TOKEN** and **DISCORD_CHANNELS** "
+                "(comma-separated channel IDs) in Render, invite the bot to your server, and I'll watch it.")
+    if isinstance(msgs, dict) and msgs.get("error"):
+        return f"I couldn't read Discord, Sir — {msgs['error']}."
+    if not msgs:
+        return "Nothing new in the watched channels, Sir."
+    listing = "\n".join(f"- {m['author']}: {m['content']}" for m in msgs[:60])
+    prompt = (f"{JARVIS_PROMPT}\n\n{facts}\n\nMani asked: \"{msg}\"\n\nRecent Discord messages across his watched "
+              f"channels:\n{listing}\n\nSummarize what's happening: key topics, anything directed at him or needing a "
+              "response, notable activity. Be concise. Do NOT invent messages not listed.")
+    return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
+
 CREW_ROLES = {
     "Researcher": "You are a world-class researcher. Find facts, gather context, produce thorough research summaries.",
     "Analyst":    "You are a sharp strategic analyst. Evaluate data, find patterns, assess risks and opportunities.",
@@ -1700,6 +1813,20 @@ def list_provmodels():
             out[prov] = f"ERR: {str(e)[:120]}"
     return jsonify(out)
 
+@app.route("/digest")
+def digest():
+    """Proactive scan — inbox + Discord in one briefing. Call on demand or from a cron."""
+    facts = get_live_context()
+    parts = []
+    em = fetch_recent_emails(limit=12, unread_only=False)
+    if isinstance(em, list) and em:
+        parts.append(check_email_answer("brief me on my inbox", [], facts))
+    dc = fetch_discord_messages()
+    if isinstance(dc, list) and dc:
+        parts.append(check_discord_answer("brief me on my discord", [], facts))
+    return jsonify({"digest": "\n\n".join(p for p in parts if p) or "Nothing pressing, Sir.",
+                    "email_linked": GMAIL_APP_PW != "", "discord_linked": bool(DISCORD_BOT_TOKEN and DISCORD_CHANNELS)})
+
 @app.route("/diag")
 def diag():
     """Live per-provider health — actually calls each provider (bypassing cooldown)
@@ -1864,6 +1991,25 @@ def chat():
         save_memory(base_facts, history)
         return jsonify({"reply": reply, "intent": "mani_read"})
     # ─────────────────────────────────────────────────────────────────────
+
+    # ── Gmail READ + Discord WATCH — go straight to the reader, not the tool loop ──
+    _email_read = any(k in msg_lo for k in ("my email", "my inbox", "check email", "check my mail",
+                                            "check my email", "read my email", "read my mail", "unread",
+                                            "new emails", "any emails", "my mail", "sponsorship email",
+                                            "scan my email", "anything important in my", "who emailed"))
+    _discord_read = any(k in msg_lo for k in ("my discord", "discord server", "in discord", "on discord",
+                                              "discord channel", "my server", "the communities", "what's new in discord",
+                                              "whats new in discord", "check discord", "watch discord"))
+    if _email_read and not any(k in msg_lo for k in ("send", "compose", "write an email", "reply to", "draft")):
+        reply = check_email_answer(msg, history, facts)
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "email"})
+    if _discord_read:
+        reply = check_discord_answer(msg, history, facts)
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "discord"})
 
     # Deterministic route: email/PC/browser/web requests ALWAYS use the agent's
     # real tools — never the text-only paths that refuse or hallucinate.
