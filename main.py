@@ -40,33 +40,36 @@ def login():
 # request — the waterfall fails over instead of blocking. Per-call timeouts (vision,
 # embeddings) override this where a longer wait is warranted.
 CLIENT_TIMEOUT = 20
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"), timeout=CLIENT_TIMEOUT)
+# max_retries=0 is CRITICAL: the OpenAI/Groq SDKs retry 2x by default, so a timed-out
+# call becomes timeout*3 (~45-60s) and hangs the whole waterfall. With 0 retries, each
+# model fails FAST at its per-call timeout and the chain moves to the next brain.
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"), timeout=CLIENT_TIMEOUT, max_retries=0)
 or_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
-    timeout=CLIENT_TIMEOUT,
+    timeout=CLIENT_TIMEOUT, max_retries=0,
 )
 
 # Extra providers auto-activate the moment their key exists in the Render env.
 # No key -> the client is None and the chain silently skips that tier.
 NVIDIA_KEY = os.environ.get("NVIDIA_API_KEY")
-nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY, timeout=CLIENT_TIMEOUT) if NVIDIA_KEY else None
+nv_client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=NVIDIA_KEY, timeout=CLIENT_TIMEOUT, max_retries=0) if NVIDIA_KEY else None
 
 # Paid tier: if an Anthropic key is present, Borfoli becomes literally Claude.
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
-claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY, timeout=CLIENT_TIMEOUT) if ANTHROPIC_KEY else None
+claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROPIC_KEY, timeout=CLIENT_TIMEOUT, max_retries=0) if ANTHROPIC_KEY else None
 
 # Google Gemini direct API (OpenAI-compatible). Separate, generous free quota
 # (~1500/day) vs OpenRouter's tiny free-vision limits — this is Borfoli's real eyes.
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 gemini_client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                       api_key=GEMINI_KEY, timeout=CLIENT_TIMEOUT) if GEMINI_KEY else None
+                       api_key=GEMINI_KEY, timeout=CLIENT_TIMEOUT, max_retries=0) if GEMINI_KEY else None
 
-# Cerebras — free, blazing-fast, and DOES native tool-calling (like Groq). A second
-# tool-calling provider so the agent survives Groq's daily limit. Free key: cloud.cerebras.ai
+# Cerebras — retained only if a key is set; as of Aug 2026 its free tier is paywalled
+# (402), so it stays out of the active chains and simply no-ops when unconfigured.
 CEREBRAS_KEY = os.environ.get("CEREBRAS_API_KEY")
 cerebras_client = OpenAI(base_url="https://api.cerebras.ai/v1", api_key=CEREBRAS_KEY,
-                         timeout=CLIENT_TIMEOUT) if CEREBRAS_KEY else None
+                         timeout=CLIENT_TIMEOUT, max_retries=0) if CEREBRAS_KEY else None
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -103,15 +106,16 @@ MEGA_CHAIN = [
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — fast + strong, confirmed working providers (NVIDIA clocked 0.4s, Groq ~1-2s).
-    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq-fast — PRIMARY
-    ("meta/llama-3.3-70b-instruct",                  "nvidia"),    # fast, solid general (NVIDIA confirmed)
-    ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # strong reasoning
-    ("gemini-2.5-flash",                             "google"),    # smartest free, slower (~14s) — fallback
-    # Tier 2 — big free brains (deeper fallback).
+    # Tier 1 — confirmed FAST (all <0.6s in /diag): these carry the load.
+    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq 0.2s — PRIMARY
+    ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # 0.5s, strong reasoning
+    ("gemini-2.5-flash",                             "google"),    # 0.5s warm, smartest free
+    ("openai/gpt-oss-20b",                           "groq"),      # 0.2s fast
+    # Tier 2 — big free brains (deeper fallback; may be slower under load).
     ("nvidia/nemotron-3-super-120b-a12b",            "nvidia"),
     ("moonshotai/kimi-k3",                           "nvidia"),
     ("deepseek-ai/deepseek-v4-flash-0731",           "nvidia"),
+    ("meta/llama-3.3-70b-instruct",                  "nvidia"),    # solid but can lag under load
     ("qwen/qwen3.6-27b",                             "groq"),
     # Tier 3 — OpenRouter free last-resort.
     ("z-ai/glm-5.2:free",                            "openrouter"),
@@ -119,7 +123,6 @@ MEGA_CHAIN = [
     ("google/gemma-4-31b-it:free",                   "openrouter"),
     # Tier 4 — fast floor (high availability).
     ("meta/llama-3.1-8b-instruct",                   "nvidia"),
-    ("openai/gpt-oss-20b",                           "groq"),
 ]
 
 JARVIS_PROMPT = """You are BORFOLI — Mani's personal JARVIS: a highly capable AI chief of staff modeled on a brilliant, unflappable British butler crossed with a world-class advisor. Dry wit, impeccable manners, total competence, quiet loyalty. You are a persona wrapped around a genuinely useful assistant — usefulness ALWAYS comes first. When anything conflicts, priority is: accuracy > usefulness > brevity > persona. The wit is garnish, never the meal.
