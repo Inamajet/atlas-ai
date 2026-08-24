@@ -76,16 +76,16 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
-ROUTER_MODEL   = "llama-3.1-8b-instant"   # fast + high-limit, stays on Groq for routing
-FAST_MODEL     = "gemini-2.5-flash"       # near-Sonnet, fast, native tools+vision (needs valid GEMINI_API_KEY); falls to gpt-oss
-SYNTH_MODEL    = "gemini-2.5-flash"
+ROUTER_MODEL   = "openai/gpt-oss-20b"     # fast Groq model, valid id, routes via "openai/gpt-oss" prefix
+FAST_MODEL     = "openai/gpt-oss-120b"     # strong (120b) AND Groq-fast (~1-2s); Gemini is the smart fallback in-chain
+SYNTH_MODEL    = "gemini-2.5-flash"        # quality synthesis for the council
 COUNCIL_MODELS = [
-    ("deepseek/deepseek-r1:free",                  "DeepSeek-R1"),
-    ("deepseek-r1-distill-llama-70b",              "R1-Distill"),
-    ("qwen-qwq-32b",                               "QwQ"),
-    ("llama-3.3-70b-versatile",                    "Llama"),
-    ("meta-llama/llama-4-scout-17b-16e-instruct",  "Scout"),
-    ("gemma2-9b-it",                               "Gemma"),
+    ("openai/gpt-oss-120b",                        "GPT-OSS-120B"),   # groq
+    ("qwen/qwen3.6-27b",                           "Qwen-3.6"),       # groq
+    ("z-ai/glm-5.2:free",                          "GLM-5.2"),        # openrouter free
+    ("nvidia/nemotron-3-super-120b-a12b:free",     "Nemotron-120B"),  # openrouter free
+    ("google/gemma-4-31b-it:free",                 "Gemma-4"),        # openrouter free
+    ("openai/gpt-oss-20b",                         "GPT-OSS-20B"),    # groq
 ]
 
 # ── The brain: one ordered waterfall, tuned for FAST-and-smart, not slowest-smartest.
@@ -96,24 +96,30 @@ COUNCIL_MODELS = [
 # times out is parked (cooldown) so it doesn't waste a round-trip next time.
 # (model_id, provider). DeepSeek-R1 reasoning stays out of chat (it's in the council).
 MEGA_CHAIN = [
+    # Rebuilt Aug 2026 against each provider's LIVE catalogue (/provmodels). Cerebras
+    # removed (now paywalled, 402). Old Groq Llama ids removed (Groq wiped them, 404).
+    # Every id below is confirmed to EXIST on its provider; providers are explicit so
+    # routing never guesses. Order: fast+strong first, heavy brains as deeper fallback.
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — PRIMARY: Gemini 2.5 Flash (near-Sonnet, fast) when GEMINI_API_KEY is valid.
-    ("gemini-2.5-flash",                             "google"),
-    # Tier 1b — Cerebras gpt-oss-120b (strongest free, fast) — used if Gemini key missing/maxed.
-    ("gpt-oss-120b",                                 "cerebras"),
-    ("qwen-3-235b-a22b-instruct-2507",               "cerebras"),   # strong reasoning backup on cerebras
-    # Tier 2 — fast Groq, always-on when Cerebras is exhausted.
-    ("llama-3.3-70b-versatile",                      "groq"),
-    ("google/gemini-2.0-flash-exp:free",             "openrouter"),
-    # Tier 3 — heavier free brains (slower; only if everything above is down).
-    ("deepseek/deepseek-chat-v3-0324:free",          "openrouter"),
-    ("qwen/qwen-2.5-72b-instruct:free",              "openrouter"),
-    ("meta-llama/llama-3.3-70b-instruct:free",       "openrouter"),
-    # Tier 4 — Groq floor. Sub-second, high daily limits.
-    ("llama-3.1-8b-instant",                         "groq"),
-    ("gemma2-9b-it",                                 "groq"),
+    # Tier 1 — fast + strong, confirmed working providers (NVIDIA clocked 0.4s, Groq ~1-2s).
+    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq-fast — PRIMARY
+    ("meta/llama-3.3-70b-instruct",                  "nvidia"),    # fast, solid general (NVIDIA confirmed)
+    ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # strong reasoning
+    ("gemini-2.5-flash",                             "google"),    # smartest free, slower (~14s) — fallback
+    # Tier 2 — big free brains (deeper fallback).
+    ("nvidia/nemotron-3-super-120b-a12b",            "nvidia"),
+    ("moonshotai/kimi-k3",                           "nvidia"),
+    ("deepseek-ai/deepseek-v4-flash-0731",           "nvidia"),
+    ("qwen/qwen3.6-27b",                             "groq"),
+    # Tier 3 — OpenRouter free last-resort.
+    ("z-ai/glm-5.2:free",                            "openrouter"),
+    ("nvidia/nemotron-3-ultra-550b-a55b:free",       "openrouter"),
+    ("google/gemma-4-31b-it:free",                   "openrouter"),
+    # Tier 4 — fast floor (high availability).
+    ("meta/llama-3.1-8b-instruct",                   "nvidia"),
+    ("openai/gpt-oss-20b",                           "groq"),
 ]
 
 JARVIS_PROMPT = """You are BORFOLI — Mani's personal JARVIS: a highly capable AI chief of staff modeled on a brilliant, unflappable British butler crossed with a world-class advisor. Dry wit, impeccable manners, total competence, quiet loyalty. You are a persona wrapped around a genuinely useful assistant — usefulness ALWAYS comes first. When anything conflicts, priority is: accuracy > usefulness > brevity > persona. The wit is garnish, never the meal.
@@ -1099,16 +1105,14 @@ _last_tool_err = {"e": ""}
 # tools keep working on NVIDIA / OpenRouter instead of dying. Text-format tool calls
 # from models that don't emit native tool_calls are caught by _parse_text_tools.
 _TOOL_CHAIN = [
-    # Native tool-calling providers, best-first. Groq + Cerebras are the reliable free
-    # ones; Cerebras (gpt-oss-120b) covers Groq's daily limit. Dropped models that 404
-    # (wrong id / no tool support) or 413 (too small for the tool payload).
+    # Native tool-calling providers (rebuilt Aug 2026, live ids only). All support
+    # OpenAI-style tool calls. Cerebras/old-Groq-Llama removed (paywalled / 404).
     ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
-    ("gemini-2.5-flash",                        "google"),      # PRIMARY: near-Sonnet native tools (valid GEMINI key)
-    ("gpt-oss-120b",                            "cerebras"),    # smartest free tool-caller, no Groq daily cap
-    ("llama-3.3-70b-versatile",                 "groq"),        # fast clean-native fallback
-    ("qwen-3-235b-a22b-instruct-2507",          "cerebras"),    # cerebras backup
-    ("meta-llama/llama-3.3-70b-instruct:free",  "openrouter"),  # last-resort
-    ("qwen/qwen-2.5-72b-instruct:free",         "openrouter"),
+    ("openai/gpt-oss-120b",                     "groq"),        # strong tool-caller, Groq-fast — PRIMARY
+    ("meta/llama-3.3-70b-instruct",             "nvidia"),      # fast native tools (NVIDIA confirmed)
+    ("gemini-2.5-flash",                        "google"),      # near-Sonnet native tools (valid GEMINI key)
+    ("nvidia/llama-3.3-nemotron-super-49b-v1.5","nvidia"),      # reasoning tool-caller
+    ("openai/gpt-oss-20b",                      "groq"),        # fast fallback
 ]
 
 def _tool_completion(msgs, max_tokens=900):
@@ -1295,7 +1299,7 @@ def _clean_out(s):
         s = re.sub(r'<\|[^|]*\|>', '', s)
     return s.strip()
 
-def _one_call(model, messages, max_tokens, provider="groq", timeout=14):
+def _one_call(model, messages, max_tokens, provider="groq", timeout=18):
     c = _client_for(provider)
     if c is None:
         raise RuntimeError(f"{provider} not configured")
@@ -1361,10 +1365,9 @@ def groq_chat(model, messages, max_tokens=1024):
 # Gemini 2.0 Flash reads screens & judges pixel coordinates FAR better than the
 # old llama-11b-vision, which is why clicks were missing. Same cooldown logic.
 VISION_CHAIN = [
-    ("gemini-2.5-flash",                              "google"),  # BEST screen vision (valid GEMINI key) — accurate click coords
-    ("meta-llama/llama-4-scout-17b-16e-instruct",     "groq"),    # fast multimodal fallback
-    ("meta-llama/llama-4-maverick-17b-128e-instruct", "groq"),    # bigger multimodal fallback
-    ("meta/llama-3.2-11b-vision-instruct",           "nvidia"),   # last-resort (slow)
+    ("gemini-2.5-flash",                     "google"),  # BEST screen vision (valid GEMINI key) — accurate click coords
+    ("meta/llama-3.2-90b-vision-instruct",   "nvidia"),  # strong multimodal fallback (NVIDIA, live)
+    ("meta/llama-3.2-11b-vision-instruct",   "nvidia"),  # faster vision fallback (NVIDIA, live)
 ]
 
 _last_vision_errors = []   # diagnostics: why each vision model failed on the last call
@@ -1681,12 +1684,12 @@ def diag():
     """Live per-provider health — actually calls each provider (bypassing cooldown)
     with a tiny prompt and reports the real success/error. Truth, not guesses."""
     probes = [
+        ("groq",      "openai/gpt-oss-120b"),
+        ("groq",      "openai/gpt-oss-20b"),
+        ("nvidia",    "meta/llama-3.3-70b-instruct"),
+        ("nvidia",    "nvidia/llama-3.3-nemotron-super-49b-v1.5"),
         ("google",    "gemini-2.5-flash"),
-        ("cerebras",  "gpt-oss-120b"),
-        ("groq",      "llama-3.3-70b-versatile"),
-        ("groq",      "llama-3.1-8b-instant"),
-        ("openrouter","google/gemini-2.0-flash-exp:free"),
-        ("nvidia",    NVIDIA_MODEL if 'NVIDIA_MODEL' in globals() else "meta/llama-3.1-70b-instruct"),
+        ("openrouter","z-ai/glm-5.2:free"),
     ]
     out = {}
     msgs = [{"role": "user", "content": "reply with the single word: ok"}]
