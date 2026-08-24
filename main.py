@@ -1857,10 +1857,11 @@ def chat():
     # real tools — never the text-only paths that refuse or hallucinate.
     global _agent_until
     _note_q = any(p in msg_lo for p in ("my note", "my vault", "in my notes", "my obsidian", "notes say"))
-    # Sticky agent window is only for TERSE follow-ups ("yes", "do it", "now close it") —
-    # not full conversational sentences, which were getting trapped in the tool path.
-    if (_wants_agent(msg_lo) or _agent_followup(msg_lo, history)
-            or (time.time() < _agent_until and len(msg_lo) <= 25)):
+    # Route to the agent ONLY on a real action/live-data request. The old "sticky window"
+    # (keep the next N seconds in-agent) was trapping greetings and chit-chat in the slow
+    # tool loop — a greeting was taking 45s. Follow-ups are handled by _agent_followup,
+    # which looks at the actual last turn, not a blind time window.
+    if _wants_agent(msg_lo) or _agent_followup(msg_lo, history):
         intent = "agent"
     elif _note_q and VAULT_INDEX["chunks"]:
         intent = "notes"          # faithful single-model answer straight from his notes
