@@ -2043,7 +2043,7 @@ def tts():
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
-HTML = """<!DOCTYPE html>
+HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
