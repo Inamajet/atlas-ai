@@ -61,9 +61,17 @@ claude_client = OpenAI(base_url="https://api.anthropic.com/v1/", api_key=ANTHROP
 
 # Google Gemini direct API (OpenAI-compatible). Separate, generous free quota
 # (~1500/day) vs OpenRouter's tiny free-vision limits — this is Borfoli's real eyes.
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-gemini_client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                       api_key=GEMINI_KEY, timeout=CLIENT_TIMEOUT, max_retries=0) if GEMINI_KEY else None
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# Multi-key rotation: Gemini's free tier has a DAILY quota per key. Add GEMINI_API_KEY2,
+# GEMINI_API_KEY3, ... (free keys from other Google accounts) and Borfoli rotates to the
+# next key when one hits its 429 quota — so the smartest brain stays available far longer.
+GEMINI_KEYS = [os.environ.get("GEMINI_API_KEY", "")] + \
+              [os.environ.get(f"GEMINI_API_KEY{i}", "") for i in range(2, 8)]
+GEMINI_KEYS = [k for k in GEMINI_KEYS if k]
+GEMINI_KEY = GEMINI_KEYS[0] if GEMINI_KEYS else None
+gemini_clients = [OpenAI(base_url=_GEMINI_BASE, api_key=k, timeout=CLIENT_TIMEOUT, max_retries=0)
+                  for k in GEMINI_KEYS]
+gemini_client = gemini_clients[0] if gemini_clients else None
 
 # Cerebras — retained only if a key is set; as of Aug 2026 its free tier is paywalled
 # (402), so it stays out of the active chains and simply no-ops when unconfigured.
@@ -106,11 +114,13 @@ MEGA_CHAIN = [
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — PRIMARY: Gemini 2.5 Flash (smartest free, best prose) leads for quality;
-    # the fast Groq/NVIDIA brains catch instantly whenever Gemini is cold/limited.
+    # Tier 1 — PRIMARY: Gemini 2.5 Flash (smartest free, best prose) leads for quality.
+    # When Gemini's daily quota is spent, the SMART fallback is NVIDIA Nemotron — strong
+    # reasoning with CLEAN output (no harmony truncation) — so quality barely drops.
+    # gpt-oss (fast but can read terse when its reasoning eats the token budget) sits below.
     ("gemini-2.5-flash",                             "google"),    # SMARTEST free — primary
-    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq 0.2s — fast strong backup
-    ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # 0.5s, strong reasoning
+    ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # strong + clean — smart fallback (0.6s)
+    ("openai/gpt-oss-120b",                          "groq"),      # fast 120b backup (harmony format)
     ("openai/gpt-oss-20b",                           "groq"),      # 0.2s fast floor for tier 1
     # Tier 2 — big free brains (deeper fallback; may be slower under load).
     ("nvidia/nemotron-3-super-120b-a12b",            "nvidia"),
@@ -1285,6 +1295,20 @@ def _clean_out(s):
     return s.strip()
 
 def _one_call(model, messages, max_tokens, provider="groq", timeout=13):
+    # Gemini: rotate through all configured keys, skipping any that hit their daily 429
+    # quota, so the smartest brain survives one key running out.
+    if provider == "google" and gemini_clients:
+        last_exc = None
+        for gc in gemini_clients:
+            try:
+                r = gc.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, timeout=timeout)
+                return _clean_out((r.choices[0].message.content or "").strip())
+            except Exception as e:
+                last_exc = e
+                if _is_rate_limit(e):
+                    continue          # this key is tapped out — try the next Gemini key
+                raise                 # non-quota error → let the waterfall move providers
+        raise last_exc                # every Gemini key exhausted
     c = _client_for(provider)
     if c is None:
         raise RuntimeError(f"{provider} not configured")
