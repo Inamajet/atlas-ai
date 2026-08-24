@@ -39,7 +39,7 @@ def login():
 # 20s default timeout on EVERY client so one stalled provider can't hang a whole
 # request — the waterfall fails over instead of blocking. Per-call timeouts (vision,
 # embeddings) override this where a longer wait is warranted.
-CLIENT_TIMEOUT = 20
+CLIENT_TIMEOUT = 14
 # max_retries=0 is CRITICAL: the OpenAI/Groq SDKs retry 2x by default, so a timed-out
 # call becomes timeout*3 (~45-60s) and hangs the whole waterfall. With 0 retries, each
 # model fails FAST at its per-call timeout and the chain moves to the next brain.
@@ -386,16 +386,12 @@ Category:"""
     # reply is empty, fall back to "fast" (one strong model answers well) instead
     # of raising a 500. Try the Groq router first, then the resilient waterfall.
     try:
-        r = client.chat.completions.create(model=ROUTER_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0)
+        # Tight timeout — classification is one word; if the router hiccups, don't make
+        # the user wait. Fail fast to "fast" rather than hanging the whole message.
+        r = client.chat.completions.create(model=ROUTER_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0, timeout=5)
         words = (r.choices[0].message.content or "").strip().lower().split()
     except Exception:
-        try:
-            out = groq_chat(ROUTER_MODEL, [{"role": "user", "content": prompt}], max_tokens=10)
-            words = (out or "").strip().lower().split()
-            if words and words[0].startswith("["):   # a fallback notice, not a real category
-                words = []
-        except Exception:
-            words = []
+        words = []   # router hiccup → don't add a second slow call; default below
     valid = {"chitchat", "fast", "agent", "council", "task"}
     return words[0] if (words and words[0] in valid) else "fast"
 
@@ -1302,7 +1298,7 @@ def _clean_out(s):
         s = re.sub(r'<\|[^|]*\|>', '', s)
     return s.strip()
 
-def _one_call(model, messages, max_tokens, provider="groq", timeout=18):
+def _one_call(model, messages, max_tokens, provider="groq", timeout=13):
     c = _client_for(provider)
     if c is None:
         raise RuntimeError(f"{provider} not configured")
