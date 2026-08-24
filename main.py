@@ -1857,8 +1857,10 @@ def chat():
     # real tools — never the text-only paths that refuse or hallucinate.
     global _agent_until
     _note_q = any(p in msg_lo for p in ("my note", "my vault", "in my notes", "my obsidian", "notes say"))
+    # Sticky agent window is only for TERSE follow-ups ("yes", "do it", "now close it") —
+    # not full conversational sentences, which were getting trapped in the tool path.
     if (_wants_agent(msg_lo) or _agent_followup(msg_lo, history)
-            or (time.time() < _agent_until and len(msg_lo) <= 60)):
+            or (time.time() < _agent_until and len(msg_lo) <= 25)):
         intent = "agent"
     elif _note_q and VAULT_INDEX["chunks"]:
         intent = "notes"          # faithful single-model answer straight from his notes
@@ -1893,6 +1895,16 @@ def chat():
         reply = f"On it. Crew is running — I'll email you when done.\n\n**Task ID:** `{task_id}`\n\nCheck progress in the sidebar."
     else:
         reply = fast_answer(msg, history, facts)
+
+    # Never return a blank reply. If a path (esp. the agent/tool loop, or a harmony-format
+    # model that cleaned to nothing) produced empty text, regenerate through the clean
+    # fast path; if even that is empty, give a graceful line instead of silence.
+    if not (reply or "").strip() or (reply or "").strip().startswith("["):
+        alt = fast_answer(msg, history, facts)
+        if (alt or "").strip() and not alt.strip().startswith("["):
+            reply, intent = alt, "fast"
+    if not (reply or "").strip():
+        reply = "Apologies, Sir — I lost that one in transit. Say it again and I'll answer properly."
 
     new_fact = extract_facts(msg, reply)
     if new_fact: base_facts = (base_facts + "\n" + new_fact).strip()
