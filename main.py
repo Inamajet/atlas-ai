@@ -80,7 +80,7 @@ USER_EMAIL = "manitejamaram1@gmail.com"
 HEADERS = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
 
 ROUTER_MODEL   = "openai/gpt-oss-20b"     # fast Groq model, valid id, routes via "openai/gpt-oss" prefix
-FAST_MODEL     = "openai/gpt-oss-120b"     # strong (120b) AND Groq-fast (~1-2s); Gemini is the smart fallback in-chain
+FAST_MODEL     = "gemini-2.5-flash"        # PRIMARY brain — smartest free, best writing (matches the JARVIS others run); fast models back it up
 SYNTH_MODEL    = "gemini-2.5-flash"        # quality synthesis for the council
 COUNCIL_MODELS = [
     ("openai/gpt-oss-120b",                        "GPT-OSS-120B"),   # groq
@@ -106,11 +106,12 @@ MEGA_CHAIN = [
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
     ("claude-opus-4-8",                              "anthropic"),
     ("claude-sonnet-5",                              "anthropic"),
-    # Tier 1 — confirmed FAST (all <0.6s in /diag): these carry the load.
-    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq 0.2s — PRIMARY
+    # Tier 1 — PRIMARY: Gemini 2.5 Flash (smartest free, best prose) leads for quality;
+    # the fast Groq/NVIDIA brains catch instantly whenever Gemini is cold/limited.
+    ("gemini-2.5-flash",                             "google"),    # SMARTEST free — primary
+    ("openai/gpt-oss-120b",                          "groq"),      # 120b, Groq 0.2s — fast strong backup
     ("nvidia/llama-3.3-nemotron-super-49b-v1.5",     "nvidia"),    # 0.5s, strong reasoning
-    ("gemini-2.5-flash",                             "google"),    # 0.5s warm, smartest free
-    ("openai/gpt-oss-20b",                           "groq"),      # 0.2s fast
+    ("openai/gpt-oss-20b",                           "groq"),      # 0.2s fast floor for tier 1
     # Tier 2 — big free brains (deeper fallback; may be slower under load).
     ("nvidia/nemotron-3-super-120b-a12b",            "nvidia"),
     ("moonshotai/kimi-k3",                           "nvidia"),
@@ -1092,9 +1093,9 @@ _TOOL_CHAIN = [
     # Native tool-calling providers (rebuilt Aug 2026, live ids only). All support
     # OpenAI-style tool calls. Cerebras/old-Groq-Llama removed (paywalled / 404).
     ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
-    ("openai/gpt-oss-120b",                     "groq"),        # strong tool-caller, Groq-fast — PRIMARY
+    ("gemini-2.5-flash",                        "google"),      # smartest native tools — PRIMARY
+    ("openai/gpt-oss-120b",                     "groq"),        # strong tool-caller, Groq-fast backup
     ("meta/llama-3.3-70b-instruct",             "nvidia"),      # fast native tools (NVIDIA confirmed)
-    ("gemini-2.5-flash",                        "google"),      # near-Sonnet native tools (valid GEMINI key)
     ("nvidia/llama-3.3-nemotron-super-49b-v1.5","nvidia"),      # reasoning tool-caller
     ("openai/gpt-oss-20b",                      "groq"),        # fast fallback
 ]
