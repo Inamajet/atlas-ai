@@ -1295,11 +1295,12 @@ def _clean_out(s):
         s = re.sub(r'<\|[^|]*\|>', '', s)
     return s.strip()
 
-def _one_call(model, messages, max_tokens, provider="groq"):
+def _one_call(model, messages, max_tokens, provider="groq", timeout=14):
     c = _client_for(provider)
     if c is None:
         raise RuntimeError(f"{provider} not configured")
-    r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
+    # Hard per-call timeout so one slow provider can't hang the whole waterfall.
+    r = c.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, timeout=timeout)
     return _clean_out((r.choices[0].message.content or "").strip())
 
 def groq_chat(model, messages, max_tokens=1024):
@@ -1314,25 +1315,46 @@ def groq_chat(model, messages, max_tokens=1024):
         seen.add(key)
         chain.append(key)
     rate_limited = False
+    tried_any = False
+    last_err = ""
     now = time.time()
+    # Pass 1: respect cooldowns (skip models parked by a recent failure).
     for m, prov in chain:
         if _client_for(prov) is None:
             continue
         if _cooldown.get((m, prov), 0) > now:
-            continue                      # still cooling down from a recent 429
+            continue                      # still cooling down from a recent failure
+        tried_any = True
         try:
             out = _one_call(m, messages, max_tokens, prov)
             _last_win["m"] = f"{prov}/{m}"
             return out
         except Exception as e:
+            last_err = f"{prov}/{m}: {str(e)[:120]}"
             if _is_rate_limit(e):
                 rate_limited = True
-                _cooldown[(m, prov)] = time.time() + 120
+                _cooldown[(m, prov)] = time.time() + 40   # per-minute limits clear fast
             else:
-                _cooldown[(m, prov)] = time.time() + 60   # park slow/timing-out models too
+                _cooldown[(m, prov)] = time.time() + 20   # park slow/erroring models briefly
             continue                      # any error → next brain
+    # Pass 2 (last resort): if pass 1 skipped EVERYTHING due to cooldowns, ignore
+    # them and actually try the chain — never return "unavailable" without trying.
+    if not tried_any:
+        for m, prov in chain:
+            if _client_for(prov) is None:
+                continue
+            try:
+                out = _one_call(m, messages, max_tokens, prov)
+                _last_win["m"] = f"{prov}/{m}"
+                return out
+            except Exception as e:
+                last_err = f"{prov}/{m}: {str(e)[:120]}"
+                if _is_rate_limit(e):
+                    rate_limited = True
+                continue
+    _last_win["err"] = last_err
     if rate_limited:
-        return "[⚠ Every free model is rate-limited at once — that's rare. Give it a minute and retry, or add a paid ANTHROPIC_API_KEY for unlimited use. I did NOT perform any action.]"
+        return "[⚠ Every free model is rate-limited at once — that's rare. Give it ~30s and retry. I did NOT perform any action.]"
     return "[Model temporarily unavailable. I did NOT perform any action — try again.]"
 
 # ── Vision waterfall — Borfoli's eyes for computer-use (screen reading + clicks).
@@ -1630,12 +1652,40 @@ def system_status():
                       "nvidia": nv_client is not None, "openrouter": or_client is not None,
                       "anthropic": claude_client is not None, "google": gemini_client is not None},
         "last_win": _last_win.get("m", ""),
+        "last_err": _last_win.get("err", ""),
         "tool_err": _last_tool_err.get("e", ""),
         "vault": {"notes": VAULT_INDEX["notes"], "chunks": len(VAULT_INDEX["chunks"]), "method": VAULT_INDEX["method"]},
         "identity": {"tagline": "BORN FROM LIGHT",
                      "archetypes": ["NIGHTWING", "DANTE", "GAROU"],
                      "directives": ["arXiv CYBERSEC PAPER", "SAT 1500+", "14% BF CUT", "MANI OS"]},
     })
+
+@app.route("/diag")
+def diag():
+    """Live per-provider health — actually calls each provider (bypassing cooldown)
+    with a tiny prompt and reports the real success/error. Truth, not guesses."""
+    probes = [
+        ("google",    "gemini-2.5-flash"),
+        ("cerebras",  "gpt-oss-120b"),
+        ("groq",      "llama-3.3-70b-versatile"),
+        ("groq",      "llama-3.1-8b-instant"),
+        ("openrouter","google/gemini-2.0-flash-exp:free"),
+        ("nvidia",    NVIDIA_MODEL if 'NVIDIA_MODEL' in globals() else "meta/llama-3.1-70b-instruct"),
+    ]
+    out = {}
+    msgs = [{"role": "user", "content": "reply with the single word: ok"}]
+    for prov, model in probes:
+        if _client_for(prov) is None:
+            out[f"{prov}/{model}"] = "no client (key missing)"
+            continue
+        _cooldown.pop((model, prov), None)   # bypass any park for a true test
+        t0 = time.time()
+        try:
+            r = _one_call(model, msgs, 8, prov, timeout=15)
+            out[f"{prov}/{model}"] = f"OK ({time.time()-t0:.1f}s): {r[:40]}"
+        except Exception as e:
+            out[f"{prov}/{model}"] = f"ERR ({time.time()-t0:.1f}s): {str(e)[:160]}"
+    return jsonify(out)
 
 # ── Chat Routes ───────────────────────────────────────────────────────────────
 
