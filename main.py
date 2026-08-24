@@ -1660,8 +1660,8 @@ def system_status():
                      "directives": ["arXiv CYBERSEC PAPER", "SAT 1500+", "14% BF CUT", "MANI OS"]},
     })
 
-@app.route("/models")
-def list_models():
+@app.route("/provmodels")
+def list_provmodels():
     """Ground truth: the model ids each working provider ACTUALLY offers right now."""
     out = {}
     for prov in ("groq", "nvidia", "openrouter", "cerebras", "google"):
