@@ -1109,9 +1109,12 @@ AGENT_INSTRUCTIONS = (
     "use the SANDBOXED BROWSER: browse_open(url or search) then browse_click(ref)/browse_type(ref,text,enter=true) "
     "using the [numbered] elements it returns, browse_look to re-read, browse_scroll to scroll. It runs in its own "
     "window with its own cursor and NEVER touches Mani's real mouse, so prefer it for all web work. "
-    "IMPORTANT: apps that have a WEB version — Discord, Spotify, WhatsApp, Slack, Gmail, Twitter/X, etc. — should "
-    "be done in the sandboxed BROWSER (browse_open('discord') etc.), NOT the desktop app: it's far more reliable and "
-    "his logins are remembered. Only use the real cursor for things with NO web version. "
+    "IMPORTANT: web tasks (YouTube, Discord, Spotify, Gmail, Reddit, Twitter/X, any site) run through the "
+    "browse_* tools which drive HIS OWN REAL BROWSER, in a dedicated Borfoli tab, where HE IS ALREADY LOGGED IN "
+    "as himself. So: NEVER tell him to log in, NEVER say you need his credentials or that you're logged out — you "
+    "are inside his authenticated browser. Just do the task: browse_open(url or search) → browse_look to read → "
+    "browse_click(ref)/browse_type(ref,text,enter=true). His homepage/feed/subscriptions are HIS real personalized "
+    "ones. Only use the real cursor (pc_*) for things with NO web version. "
     "(2) For DESKTOP-only apps (Notepad, File Explorer, settings, games, non-browser windows) use the real cursor: see_screen FIRST "
     "(it reports the screen resolution), then pc_click at the pixel coordinates you saw, pc_type to type, pc_key for "
     "keys/shortcuts, pc_scroll to scroll; look again with see_screen to verify and correct a missed click. "
@@ -1898,7 +1901,7 @@ def run_on_ext(action, args, timeout=40):
         c = ext_commands.get(cid)
         if c and c["status"] == "done":
             return c["result"]
-        time.sleep(0.6)
+        time.sleep(0.4)
     if cid in ext_commands:
         ext_commands[cid]["status"] = "expired"
     return "The browser extension didn't respond — is it installed and is a normal tab open?"
