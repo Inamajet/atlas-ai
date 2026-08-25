@@ -2834,9 +2834,32 @@ $('mic').onclick=()=>{
    (b) wake then command — "Borfoli" [pause] "open youtube". */
 let wakeOn=false,wakeRec=null,wakeBusy=false,armed=false,armTimer=null,wakeWatch=null;
 const WAKE=/\b(icarus|icaris|icarous|ickarus|ickerus|icar[uo]s|i[\s-]?carus|acarus|echarus|hey\s+icarus)\b[\s,:.\-]*/i;
-function armWake(){armed=true;$('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';clearTimeout(armTimer);armTimer=setTimeout(disarmWake,7000);}
-function disarmWake(){armed=false;$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';}
-function fireCmd(cmd){cmd=(cmd||'').trim();if(!cmd)return;wakeBusy=true;disarmWake();$('inp').value=cmd;send();setTimeout(()=>{wakeBusy=false;},1200);}
+function disarmWake(){$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';}
+/* On wake, STOP the wake listener and run a dedicated recognizer that fully listens for
+   the command until you stop speaking — then resume the wake listener. Fixes "won't full
+   listen". Works for both the browser wake word and the trained openWakeWord model. */
+let capRec=null;
+function captureCommand(prefill){
+  if(wakeBusy)return; wakeBusy=true;
+  clearInterval(wakeWatch);
+  try{wakeRec&&wakeRec.abort();}catch(_){}               // free the mic for a clean, full capture
+  if(OWW.active){try{OWW.ctx&&OWW.ctx.suspend();}catch(_){}}
+  beep();
+  if(!SR){wakeBusy=false;return;}
+  capRec=new SR();capRec.lang='en-US';capRec.interimResults=true;capRec.continuous=false;capRec.maxAlternatives=1;
+  let fin=(prefill?prefill.trim()+' ':'');
+  $('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';$('inp').value=fin.trim();
+  capRec.onresult=e=>{let iv='';for(let i=e.resultIndex;i<e.results.length;i++){const tr=e.results[i][0].transcript;if(e.results[i].isFinal)fin+=tr+' ';else iv+=tr;}$('inp').value=(fin+iv).trim();};
+  capRec.onerror=()=>{};
+  capRec.onend=()=>{
+    $('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';
+    const v=$('inp').value.trim(); if(v)send();
+    setTimeout(()=>{ wakeBusy=false;
+      if(wakeOn){ if(OWW.active){try{OWW.ctx&&OWW.ctx.resume();}catch(_){}OWW.melBuf=[];OWW.embBuf=[];} else webWakeStart(); }
+    },600);
+  };
+  try{capRec.start();}catch(_){capRec.onend();}
+}
 function startWake(){
   if(!SR){addMsg('b','Voice input is not supported in this browser, Sir.');return;}
   try{wakeRec&&wakeRec.abort();}catch(_){}
@@ -2848,23 +2871,18 @@ function startWake(){
       let t=(res[0].transcript||'').trim();
       let anyWake=false;for(let k=0;k<res.length;k++){if(WAKE.test(res[k].transcript)){anyWake=true;break;}}
       const m=t.match(WAKE);
-      if(m){
-        const cmd=t.slice(m.index+m[0].length).trim();
-        if(cmd)fireCmd(cmd); else armWake();
-        return;
-      }
-      if(anyWake){armWake();return;}
-      if(armed){fireCmd(t);return;}                       // wake heard just before → this is the command
+      if(m){captureCommand(t.slice(m.index+m[0].length).trim());return;}   // wake (+ any trailing command)
+      if(anyWake){captureCommand('');return;}
     }
   };
   wakeRec.onerror=ev=>{const er=ev&&ev.error;
     if(er==='not-allowed'||er==='service-not-allowed'){wakeOn=false;$('wake').classList.remove('on');disarmWake();
       addMsg('b','I need microphone permission for the wake word, Sir — allow it in the address bar, then tap 👂 again.');}};
-  wakeRec.onend=()=>{if(wakeOn){setTimeout(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},200);}};
+  wakeRec.onend=()=>{if(wakeOn&&!wakeBusy){setTimeout(()=>{if(wakeOn&&!wakeBusy){try{wakeRec.start();}catch(_){}}},200);}};
   try{wakeRec.start();}catch(_){}
 }
-function webWakeStart(){startWake();if(wakeWatch)clearInterval(wakeWatch);wakeWatch=setInterval(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},6000);}
-function webWakeStop(){clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
+function webWakeStart(){startWake();if(wakeWatch)clearInterval(wakeWatch);wakeWatch=setInterval(()=>{if(wakeOn&&!wakeBusy){try{wakeRec.start();}catch(_){}}},6000);}
+function webWakeStop(){clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.abort();}catch(_){}wakeRec=null;}
 
 function beep(){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.06;o.start();o.stop(c.currentTime+.12);}catch(_){}}
 
@@ -2886,17 +2904,8 @@ async function setupOWW(){
   addMsg('b','Pick your <b>icarus.onnx</b> (from the Colab). No key needed.');
   inp.click();
 }
-async function owwCapture(){
-  if(OWW.busy)return;OWW.busy=true;
-  if(!SR){OWW.busy=false;return;}
-  const r=new SR();r.lang='en-US';r.interimResults=true;r.continuous=false;let f='';
-  $('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';
-  r.onresult=e=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++){t+=e.results[i][0].transcript;if(e.results[i].isFinal)f+=e.results[i][0].transcript;}$('inp').value=(f||t).trim();};
-  r.onend=()=>{$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';const v=$('inp').value.trim();if(v)send();setTimeout(()=>{OWW.busy=false;},800);};
-  try{r.start();}catch(_){r.onend();}
-}
 async function owwProcess(chunk){
-  if(!OWW.active||window.__speaking||OWW.busy)return;
+  if(!OWW.active||window.__speaking||wakeBusy)return;
   const ort=OWW.ort;
   try{
     const at=new ort.Tensor('float32',Float32Array.from(chunk),[1,chunk.length]);
@@ -2918,7 +2927,7 @@ async function owwProcess(chunk){
       for(let i=0;i<16;i++)for(let j=0;j<96;j++)w[i*96+j]=OWW.embBuf[s+i][j];
       const wo=await OWW.ww.run({[OWW.ww.inputNames[0]]:new ort.Tensor('float32',w,[1,16,96])});
       const score=wo[OWW.ww.outputNames[0]].data[0];
-      if(score>OWW.thresh){OWW.embBuf=[];beep();owwCapture();}
+      if(score>OWW.thresh){OWW.embBuf=[];captureCommand('');}
     }
   }catch(_){}
 }
