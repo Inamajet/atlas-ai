@@ -2833,7 +2833,7 @@ $('mic').onclick=()=>{
    (a) one phrase — "Borfoli open youtube" → runs "open youtube";
    (b) wake then command — "Borfoli" [pause] "open youtube". */
 let wakeOn=false,wakeRec=null,wakeBusy=false,armed=false,armTimer=null,wakeWatch=null;
-const WAKE=/\b(borfoli\w*|borfolio|boris|borf\w*|boarding|board|boar|bore|bora|borah|boro|bor|bore\w*)\b[\s,:.\-]*/i;
+const WAKE=/\b(icarus|icaris|icarous|ickarus|ickerus|icar[uo]s|i[\s-]?carus|acarus|echarus|hey\s+icarus)\b[\s,:.\-]*/i;
 function armWake(){armed=true;$('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';clearTimeout(armTimer);armTimer=setTimeout(disarmWake,7000);}
 function disarmWake(){armed=false;$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';}
 function fireCmd(cmd){cmd=(cmd||'').trim();if(!cmd)return;wakeBusy=true;disarmWake();$('inp').value=cmd;send();setTimeout(()=>{wakeBusy=false;},1200);}
@@ -2917,7 +2917,7 @@ async function toggleWake(){
   if(wakeOn){
     if(picoReady()){const ok=await startPico();if(!ok){webWakeStart();}}
     else{webWakeStart();
-      addMsg('b','Browser wake word active, Sir (say “Borfoli, …”). For a rock-solid trained wake word, double-tap 👂 to set up Picovoice Porcupine.');}
+      addMsg('b','Wake word active, Sir — say “Icarus, open my YouTube homepage,” or just “Icarus” then your command.');}
   }else{await stopPico();webWakeStop();}
 }
 let wkTimer=null;
