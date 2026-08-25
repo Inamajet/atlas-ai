@@ -2827,37 +2827,49 @@ $('mic').onclick=()=>{
   try{rec.start();}catch(_){}
 };
 
-/* ── wake word: say "Borfoli …" (or "Bor …") and it hears the command ── */
-let wakeOn=false,wakeRec=null,wakeBusy=false;
-const WAKE=/\b(borfoli|borfolio|boris|borfi|borf|bor)\b[\s,:.-]*/i;
+/* ── wake word: say "Borfoli …" (or "Bor …") — forgiving continuous listener ── */
+/* The Web Speech API mishears "bor" as boar/board/bore/bora, so we match a wide
+   phonetic net AND scan alternative transcripts. Two ways to trigger:
+   (a) one phrase — "Borfoli open youtube" → runs "open youtube";
+   (b) wake then command — "Borfoli" [pause] "open youtube". */
+let wakeOn=false,wakeRec=null,wakeBusy=false,armed=false,armTimer=null,wakeWatch=null;
+const WAKE=/\b(borfoli\w*|borfolio|boris|borf\w*|boarding|board|boar|bore|bora|borah|boro|bor|bore\w*)\b[\s,:.\-]*/i;
+function armWake(){armed=true;$('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';clearTimeout(armTimer);armTimer=setTimeout(disarmWake,7000);}
+function disarmWake(){armed=false;$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';}
+function fireCmd(cmd){cmd=(cmd||'').trim();if(!cmd)return;wakeBusy=true;disarmWake();$('inp').value=cmd;send();setTimeout(()=>{wakeBusy=false;},1200);}
 function startWake(){
   if(!SR){addMsg('b','Voice input is not supported in this browser, Sir.');return;}
-  wakeRec=new SR();wakeRec.lang='en-US';wakeRec.interimResults=false;wakeRec.continuous=true;
+  try{wakeRec&&wakeRec.abort();}catch(_){}
+  wakeRec=new SR();wakeRec.lang='en-US';wakeRec.interimResults=true;wakeRec.continuous=true;wakeRec.maxAlternatives=3;
   wakeRec.onresult=e=>{
     if(window.__speaking||wakeBusy)return;               // ignore Borfoli's own voice / while busy
     for(let i=e.resultIndex;i<e.results.length;i++){
-      if(!e.results[i].isFinal)continue;
-      let t=(e.results[i][0].transcript||'').trim();
+      const res=e.results[i];if(!res.isFinal)continue;
+      let t=(res[0].transcript||'').trim();
+      let anyWake=false;for(let k=0;k<res.length;k++){if(WAKE.test(res[k].transcript)){anyWake=true;break;}}
       const m=t.match(WAKE);
-      if(!m)continue;
-      let cmd=t.slice(m.index+m[0].length).trim();
-      if(cmd){                                            // "borfoli open youtube" → send "open youtube"
-        wakeBusy=true;$('inp').value=cmd;$('wake').classList.add('rec');
-        send();setTimeout(()=>{wakeBusy=false;$('wake').classList.remove('rec');},1500);
-      }else{                                              // just "borfoli" → prompt
-        $('inp').focus();$('inp').placeholder='Listening, Sir…';
-        setTimeout(()=>{$('inp').placeholder='Speak or type your instruction, Sir…';},4000);
+      if(m){
+        const cmd=t.slice(m.index+m[0].length).trim();
+        if(cmd)fireCmd(cmd); else armWake();
+        return;
       }
+      if(anyWake){armWake();return;}
+      if(armed){fireCmd(t);return;}                       // wake heard just before → this is the command
     }
   };
-  wakeRec.onerror=ev=>{ if(ev&&ev.error==='not-allowed'){wakeOn=false;$('wake').classList.remove('on');addMsg('b','I need microphone permission for the wake word, Sir — allow it and tap 👂 again.');} };
-  wakeRec.onend=()=>{ if(wakeOn){try{wakeRec.start();}catch(_){setTimeout(()=>{if(wakeOn)startWake();},600);}} };
+  wakeRec.onerror=ev=>{const er=ev&&ev.error;
+    if(er==='not-allowed'||er==='service-not-allowed'){wakeOn=false;$('wake').classList.remove('on');disarmWake();
+      addMsg('b','I need microphone permission for the wake word, Sir — allow it in the address bar, then tap 👂 again.');}};
+  wakeRec.onend=()=>{if(wakeOn){setTimeout(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},200);}};
   try{wakeRec.start();}catch(_){}
 }
 $('wake').onclick=()=>{
   wakeOn=!wakeOn;$('wake').classList.toggle('on',wakeOn);
-  if(wakeOn){startWake();addMsg('b','Wake word active, Sir. Just say “Borfoli, …” and I’ll act — e.g. “Borfoli, open my YouTube homepage.”');}
-  else{try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
+  if(wakeOn){startWake();
+    if(wakeWatch)clearInterval(wakeWatch);
+    wakeWatch=setInterval(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},6000);  // watchdog revives a silently-dead recognizer
+    addMsg('b','Wake word active, Sir. Say “Borfoli, open my YouTube homepage” — or just “Borfoli”, then your command.');}
+  else{clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
 };
 
 /* ── objectives (local cockpit scratch) ── */
