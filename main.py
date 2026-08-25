@@ -1138,9 +1138,8 @@ _TOOL_CHAIN = [
     # Native tool-calling providers (rebuilt Aug 2026, live ids only). All support
     # OpenAI-style tool calls. Cerebras/old-Groq-Llama removed (paywalled / 404).
     ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
-    ("gemini-2.5-flash",                        "google"),      # smartest native tools — PRIMARY
-    ("openai/gpt-oss-120b",                     "groq"),        # strong tool-caller, Groq-fast backup
-    ("meta/llama-3.3-70b-instruct",             "nvidia"),      # fast native tools (NVIDIA confirmed)
+    ("openai/gpt-oss-120b",                     "groq"),        # FAST (0.2s) tool-caller — leads so the browse loop is snappy
+    ("gemini-2.5-flash",                        "google"),      # smart fallback
     ("nvidia/llama-3.3-nemotron-super-49b-v1.5","nvidia"),      # reasoning tool-caller
     ("openai/gpt-oss-20b",                      "groq"),        # fast fallback
 ]
@@ -1901,7 +1900,7 @@ def run_on_ext(action, args, timeout=40):
         c = ext_commands.get(cid)
         if c and c["status"] == "done":
             return c["result"]
-        time.sleep(0.4)
+        time.sleep(0.25)
     if cid in ext_commands:
         ext_commands[cid]["status"] = "expired"
     return "The browser extension didn't respond — is it installed and is a normal tab open?"
@@ -2639,6 +2638,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
         <div class="iw">
           <input id="inp" placeholder="Speak or type your instruction, Sir…" autocomplete="off">
           <button class="ib mic" id="mic" title="Speak">🎙</button>
+          <button class="ib" id="wake" title="Wake word: say 'Borfoli …'">👂</button>
           <button class="ib" id="eye" title="Read my screen (upload)">◉</button>
           <input type="file" id="img" accept="image/*" style="display:none">
           <button class="ib" id="ttsb" title="Voice replies">🔊</button>
@@ -2801,12 +2801,15 @@ function pickVoice(){const vs=speechSynthesis.getVoices();if(!vs.length)return;
   voice=by('Andrew')||by('Aria')||by('Guy')||by('Brian')||by('Emma')||nat[0]||pool.find(v=>/^en[-_]us/i.test(v.lang))||pool[0];}
 if(window.speechSynthesis){speechSynthesis.onvoiceschanged=pickVoice;pickVoice();}
 function stripMd(t){return (t||'').replace(/[#*`_>~\[\]]/g,'').replace(/https?:\/\/\S+/g,'').replace(/\s+/g,' ').trim().slice(0,800);}
+window.__speaking=false;
+function speakDone(){window.__speaking=false;}
 async function speak(text){
   if(!ttsOn)return;const plain=stripMd(text);if(!plain)return;
+  window.__speaking=true;
   if(serverTTS!==false){try{const r=await fetch('/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:plain})});
-    if(r.ok&&(r.headers.get('content-type')||'').includes('audio')){serverTTS=true;if(audio)audio.pause();audio=new Audio(URL.createObjectURL(await r.blob()));audio.play();return;}serverTTS=false;}catch(_){serverTTS=false;}}
-  if(!window.speechSynthesis)return;if(!voice)pickVoice();
-  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(plain);if(voice)u.voice=voice;u.rate=1.0;u.pitch=1.0;speechSynthesis.speak(u);}
+    if(r.ok&&(r.headers.get('content-type')||'').includes('audio')){serverTTS=true;if(audio)audio.pause();audio=new Audio(URL.createObjectURL(await r.blob()));audio.onended=speakDone;audio.onerror=speakDone;audio.play();return;}serverTTS=false;}catch(_){serverTTS=false;}}
+  if(!window.speechSynthesis){window.__speaking=false;return;}if(!voice)pickVoice();
+  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(plain);if(voice)u.voice=voice;u.rate=1.0;u.pitch=1.0;u.onend=speakDone;u.onerror=speakDone;speechSynthesis.speak(u);}
 $('ttsb').onclick=()=>{ttsOn=!ttsOn;$('ttsb').classList.toggle('on',ttsOn);if(!ttsOn){speechSynthesis.cancel();if(audio)audio.pause();}};
 
 /* ── mic (click-to-talk, auto-send) ── */
@@ -2822,6 +2825,39 @@ $('mic').onclick=()=>{
   rec.onerror=()=>{};
   rec.onend=()=>{listening=false;$('mic').classList.remove('rec');if($('inp').value.trim())send();};
   try{rec.start();}catch(_){}
+};
+
+/* ── wake word: say "Borfoli …" (or "Bor …") and it hears the command ── */
+let wakeOn=false,wakeRec=null,wakeBusy=false;
+const WAKE=/\b(borfoli|borfolio|boris|borfi|borf|bor)\b[\s,:.-]*/i;
+function startWake(){
+  if(!SR){addMsg('b','Voice input is not supported in this browser, Sir.');return;}
+  wakeRec=new SR();wakeRec.lang='en-US';wakeRec.interimResults=false;wakeRec.continuous=true;
+  wakeRec.onresult=e=>{
+    if(window.__speaking||wakeBusy)return;               // ignore Borfoli's own voice / while busy
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(!e.results[i].isFinal)continue;
+      let t=(e.results[i][0].transcript||'').trim();
+      const m=t.match(WAKE);
+      if(!m)continue;
+      let cmd=t.slice(m.index+m[0].length).trim();
+      if(cmd){                                            // "borfoli open youtube" → send "open youtube"
+        wakeBusy=true;$('inp').value=cmd;$('wake').classList.add('rec');
+        send();setTimeout(()=>{wakeBusy=false;$('wake').classList.remove('rec');},1500);
+      }else{                                              // just "borfoli" → prompt
+        $('inp').focus();$('inp').placeholder='Listening, Sir…';
+        setTimeout(()=>{$('inp').placeholder='Speak or type your instruction, Sir…';},4000);
+      }
+    }
+  };
+  wakeRec.onerror=ev=>{ if(ev&&ev.error==='not-allowed'){wakeOn=false;$('wake').classList.remove('on');addMsg('b','I need microphone permission for the wake word, Sir — allow it and tap 👂 again.');} };
+  wakeRec.onend=()=>{ if(wakeOn){try{wakeRec.start();}catch(_){setTimeout(()=>{if(wakeOn)startWake();},600);}} };
+  try{wakeRec.start();}catch(_){}
+}
+$('wake').onclick=()=>{
+  wakeOn=!wakeOn;$('wake').classList.toggle('on',wakeOn);
+  if(wakeOn){startWake();addMsg('b','Wake word active, Sir. Just say “Borfoli, …” and I’ll act — e.g. “Borfoli, open my YouTube homepage.”');}
+  else{try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
 };
 
 /* ── objectives (local cockpit scratch) ── */
