@@ -1084,7 +1084,7 @@ _TOOL_FNS = {
     "pc_scroll":     lambda a: run_on_pc("scroll", {"amount": a.get("amount", 0)}),
     "close_app":     lambda a: run_on_pc("close_app", {"app": a.get("app", "")}, timeout=20),
     "focus_lock":    lambda a: run_on_pc("focus_lock", {"on": a.get("on", True), "allow": a.get("allow", [])}, timeout=20),
-    "pc_open":       lambda a: run_on_pc("open", {"target": a.get("target", "")}),
+    "pc_open":       lambda a: _open_smart(a.get("target", "")),
     "pc_read_file":  lambda a: run_on_pc("read_file", {"path": a.get("path", "")}),
     "pc_run_command":lambda a: run_on_pc("run_command", {"command": a.get("command", "")}, timeout=120),
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
@@ -1995,6 +1995,23 @@ _PC_OPEN_RE = re.compile(
     r"(?:open|launch|start|run|pull\s+up|bring\s+up|go\s+to)\s+(?:the\s+|my\s+|up\s+)?(.+?)\s*[?.!]*\s*$", re.I)
 _PC_TYPE_RE = re.compile(r"^\s*type\s+(?:out\s+)?(.+?)\s*$", re.I)
 
+_WEB_NAMES = {"youtube", "yt", "gmail", "mail", "reddit", "discord", "twitter", "x",
+              "spotify", "maps", "amazon", "github", "google", "netflix", "chatgpt",
+              "whatsapp", "instagram", "facebook", "linkedin", "twitch", "wikipedia"}
+def _is_web_target(t):
+    tl = (t or "").strip().lower()
+    if tl in _WEB_NAMES: return True
+    if tl.startswith(("http://", "https://", "www.")): return True
+    if "." in tl and " " not in tl and not tl.endswith((".exe", ".txt", ".pdf", ".png", ".jpg", ".docx")): return True
+    return False
+
+def _open_smart(target):
+    """Websites → the real browser via the EXTENSION (dedicated tab, no new window).
+    Local apps/files → the PC agent. Falls back to PC open if the extension is offline."""
+    if _is_web_target(target) and ext_online():
+        return run_on_browser("browser_open", {"url": target})
+    return run_on_pc("open", {"target": target})
+
 def try_pc_action(msg):
     """Handle simple PC commands with no LLM call. Returns a result string or None."""
     if _PC_SCREEN_RE.search(msg):
@@ -2005,7 +2022,7 @@ def try_pc_action(msg):
         low = target.lower()
         # Only fast-path a simple single target; hand multi-step to the agent.
         if target and ' and ' not in low and ' then ' not in low and len(target.split()) <= 4:
-            return run_on_pc("open", {"target": target})
+            return _open_smart(target)
     m = _PC_TYPE_RE.match(msg)
     if m and len(m.group(1)) <= 300:
         return run_on_pc("type_text", {"text": m.group(1).strip().strip('"\'')})
