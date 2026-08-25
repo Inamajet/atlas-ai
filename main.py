@@ -2863,14 +2863,66 @@ function startWake(){
   wakeRec.onend=()=>{if(wakeOn){setTimeout(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},200);}};
   try{wakeRec.start();}catch(_){}
 }
-$('wake').onclick=()=>{
+function webWakeStart(){startWake();if(wakeWatch)clearInterval(wakeWatch);wakeWatch=setInterval(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},6000);}
+function webWakeStop(){clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
+
+/* ── Picovoice Porcupine — a REAL trained "Borfoli" wake word (accurate, low-power).
+   Setup once (double-tap 👂): paste your Picovoice AccessKey + upload Borfoli.ppn.
+   Porcupine listens for the wake word; a browser recognizer then captures the command. */
+let pico=null,wvp=null,picoActive=false;
+const picoCfg=()=>({key:localStorage.getItem('pico_key')||'',ppn:localStorage.getItem('pico_ppn')||''});
+const picoReady=()=>{const c=picoCfg();return !!(c.key&&c.ppn);};
+async function setupPico(){
+  const cur=picoCfg();
+  const key=prompt('Picovoice AccessKey (free at console.picovoice.ai):',cur.key||'');
+  if(key===null)return;
+  if(key.trim())localStorage.setItem('pico_key',key.trim());
+  const inp=document.createElement('input');inp.type='file';inp.accept='.ppn';
+  inp.onchange=async()=>{const f=inp.files&&inp.files[0];if(!f)return;
+    const buf=new Uint8Array(await f.arrayBuffer());let s='';for(const b of buf)s+=String.fromCharCode(b);
+    localStorage.setItem('pico_ppn',btoa(s));
+    addMsg('b','Trained “Borfoli” wake word saved, Sir. Tap 👂 to start it.');};
+  addMsg('b','AccessKey saved. Now pick your <b>Borfoli.ppn</b> file (train it at console.picovoice.ai → Porcupine → type “Borfoli” → platform <b>Web (WASM)</b> → download).');
+  inp.click();
+}
+function beep(){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.06;o.start();o.stop(c.currentTime+.12);}catch(_){}}
+async function picoCapture(){
+  // pause Porcupine's mic, capture one command with the browser recognizer, then resume
+  try{if(wvp&&pico)await wvp.unsubscribe(pico);}catch(_){}
+  if(!SR){try{if(wvp&&pico)await wvp.subscribe(pico);}catch(_){}; return;}
+  const r=new SR();r.lang='en-US';r.interimResults=true;r.continuous=false;let f='';
+  $('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';
+  r.onresult=e=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++){t+=e.results[i][0].transcript;if(e.results[i].isFinal)f+=e.results[i][0].transcript;}$('inp').value=(f||t).trim();};
+  r.onend=async()=>{$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';const v=$('inp').value.trim();if(v)send();
+    try{if(wvp&&pico&&picoActive)await wvp.subscribe(pico);}catch(_){}};
+  try{r.start();}catch(_){r.onend();}
+}
+async function startPico(){
+  const {key,ppn}=picoCfg();
+  try{
+    const P=await import('https://cdn.jsdelivr.net/npm/@picovoice/porcupine-web/+esm');
+    const W=await import('https://cdn.jsdelivr.net/npm/@picovoice/web-voice-processor/+esm');
+    pico=await P.PorcupineWorker.create(key,[{base64:ppn,label:'Borfoli'}],
+      ()=>{if(window.__speaking)return;beep();picoCapture();},
+      {publicPath:'https://cdn.jsdelivr.net/gh/Picovoice/porcupine@master/lib/common/porcupine_params.pv'});
+    wvp=W.WebVoiceProcessor;await wvp.subscribe(pico);picoActive=true;
+    addMsg('b','Trained wake word live, Sir. Say “Borfoli” and I’ll listen for your command.');
+    return true;
+  }catch(e){addMsg('b','Porcupine couldn’t start ('+((e&&e.message)||e)+'), Sir — falling back to browser wake word.');return false;}
+}
+async function stopPico(){picoActive=false;try{if(wvp&&pico)await wvp.unsubscribe(pico);if(pico)pico.release();}catch(_){}pico=null;}
+
+async function toggleWake(){
   wakeOn=!wakeOn;$('wake').classList.toggle('on',wakeOn);
-  if(wakeOn){startWake();
-    if(wakeWatch)clearInterval(wakeWatch);
-    wakeWatch=setInterval(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},6000);  // watchdog revives a silently-dead recognizer
-    addMsg('b','Wake word active, Sir. Say “Borfoli, open my YouTube homepage” — or just “Borfoli”, then your command.');}
-  else{clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
-};
+  if(wakeOn){
+    if(picoReady()){const ok=await startPico();if(!ok){webWakeStart();}}
+    else{webWakeStart();
+      addMsg('b','Browser wake word active, Sir (say “Borfoli, …”). For a rock-solid trained wake word, double-tap 👂 to set up Picovoice Porcupine.');}
+  }else{await stopPico();webWakeStop();}
+}
+let wkTimer=null;
+$('wake').onclick=()=>{ if(wkTimer)return; wkTimer=setTimeout(()=>{wkTimer=null;toggleWake();},260); };
+$('wake').ondblclick=()=>{ if(wkTimer){clearTimeout(wkTimer);wkTimer=null;} setupPico(); };
 
 /* ── objectives (local cockpit scratch) ── */
 function objs(){try{return JSON.parse(localStorage.getItem('borf_obj')||'[]')}catch(_){return[]}}
