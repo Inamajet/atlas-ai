@@ -2638,7 +2638,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
         <div class="iw">
           <input id="inp" placeholder="Speak or type your instruction, Sir…" autocomplete="off">
           <button class="ib mic" id="mic" title="Speak">🎙</button>
-          <button class="ib" id="wake" title="Wake word: say 'Borfoli …'">👂</button>
+          <button class="ib" id="conv" title="Conversation mode — just talk, hands-free">💬</button>
+          <button class="ib" id="wake" title="Wake word: say 'Icarus …'">👂</button>
           <button class="ib" id="eye" title="Read my screen (upload)">◉</button>
           <input type="file" id="img" accept="image/*" style="display:none">
           <button class="ib" id="ttsb" title="Voice replies">🔊</button>
@@ -2963,6 +2964,54 @@ async function toggleWake(){
 let wkTimer=null;
 $('wake').onclick=()=>{ if(wkTimer)return; wkTimer=setTimeout(()=>{wkTimer=null;toggleWake();},260); };
 $('wake').ondblclick=()=>{ if(wkTimer){clearTimeout(wkTimer);wkTimer=null;} setupOWW(); };
+
+/* ── CONVERSATION MODE — hands-free back-and-forth like a real call ──
+   You talk; it waits for a real pause (not a twitchy cutoff), replies out loud, then
+   listens again automatically. It never listens while it's speaking (no self-echo). */
+let convOn=false,convRec=null,convSil=null,convText='',convProcessing=false;
+const CONV_PAUSE=1700;                                 // ms of silence that means "you're done talking"
+function convWaitSpeak(){return new Promise(res=>{const iv=setInterval(()=>{if(!window.__speaking){clearInterval(iv);res();}},120);setTimeout(()=>{clearInterval(iv);res();},20000);});}
+function convListen(){
+  if(!convOn||convProcessing)return;
+  try{convRec&&convRec.abort();}catch(_){}
+  convRec=new SR();convRec.lang='en-US';convRec.interimResults=true;convRec.continuous=true;
+  convText='';
+  convRec.onresult=e=>{
+    if(window.__speaking||convProcessing)return;        // ignore its own voice
+    let fin='',iv='';
+    for(let i=0;i<e.results.length;i++){const tr=e.results[i][0].transcript;if(e.results[i].isFinal)fin+=tr+' ';else iv+=tr;}
+    convText=(fin+iv).trim();$('inp').value=convText;
+    clearTimeout(convSil);
+    if(convText)convSil=setTimeout(convTurn,CONV_PAUSE);  // send only after a real pause
+  };
+  convRec.onerror=ev=>{const er=ev&&ev.error;if(er==='not-allowed'||er==='service-not-allowed'){convOn=false;$('conv').classList.remove('on');addMsg('b','I need microphone permission for conversation mode, Sir.');}};
+  convRec.onend=()=>{if(convOn&&!convProcessing&&!window.__speaking){setTimeout(()=>{if(convOn&&!convProcessing)try{convRec.start();}catch(_){}},150);}};
+  try{convRec.start();}catch(_){}
+}
+async function convTurn(){
+  clearTimeout(convSil);
+  const text=(convText||'').trim();convText='';
+  if(!text||convProcessing)return;
+  convProcessing=true;
+  try{convRec&&convRec.abort();}catch(_){}              // stop listening while it thinks + talks
+  $('inp').value='';addMsg('u',text);$('core').classList.add('think');
+  try{
+    const d=await API('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});
+    const reply=d.reply||'—';addMsg('b',reply);speak(reply);await convWaitSpeak();
+  }catch(_){addMsg('b','I lost that, Sir — say it again.');}
+  $('core').classList.remove('think');
+  convProcessing=false;
+  if(convOn)convListen();                                // your turn again
+}
+function convToggle(){
+  convOn=!convOn;$('conv').classList.toggle('on',convOn);
+  if(convOn){ if(!SR){addMsg('b','Voice input isn’t supported in this browser, Sir.');convOn=false;$('conv').classList.remove('on');return;}
+    if(!ttsOn){ttsOn=true;$('ttsb').classList.add('on');}
+    if(wakeOn)toggleWake();                              // don't run wake + conversation at once
+    convListen();addMsg('b','Conversation mode on, Sir. Just talk — take your time, I’ll wait until you’re done, then reply out loud. Tap 💬 again to stop.');
+  }else{clearTimeout(convSil);try{convRec&&convRec.abort();}catch(_){}convRec=null;convProcessing=false;$('inp').placeholder='Speak or type your instruction, Sir…';}
+}
+$('conv').onclick=convToggle;
 
 /* ── objectives (local cockpit scratch) ── */
 function objs(){try{return JSON.parse(localStorage.getItem('borf_obj')||'[]')}catch(_){return[]}}
