@@ -2866,63 +2866,94 @@ function startWake(){
 function webWakeStart(){startWake();if(wakeWatch)clearInterval(wakeWatch);wakeWatch=setInterval(()=>{if(wakeOn){try{wakeRec.start();}catch(_){}}},6000);}
 function webWakeStop(){clearInterval(wakeWatch);disarmWake();try{wakeRec&&wakeRec.stop();}catch(_){}wakeRec=null;}
 
-/* ── Picovoice Porcupine — a REAL trained "Borfoli" wake word (accurate, low-power).
-   Setup once (double-tap 👂): paste your Picovoice AccessKey + upload Borfoli.ppn.
-   Porcupine listens for the wake word; a browser recognizer then captures the command. */
-let pico=null,wvp=null,picoActive=false;
-const picoCfg=()=>({key:localStorage.getItem('pico_key')||'',ppn:localStorage.getItem('pico_ppn')||''});
-const picoReady=()=>{const c=picoCfg();return !!(c.key&&c.ppn);};
-async function setupPico(){
-  const cur=picoCfg();
-  const key=prompt('Picovoice AccessKey (free at console.picovoice.ai):',cur.key||'');
-  if(key===null)return;
-  if(key.trim())localStorage.setItem('pico_key',key.trim());
-  const inp=document.createElement('input');inp.type='file';inp.accept='.ppn';
+function beep(){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.06;o.start();o.stop(c.currentTime+.12);}catch(_){}}
+
+/* ── openWakeWord — runs your TRAINED "Icarus" model (icarus.onnx) locally in-browser.
+   No account. Loads onnxruntime-web + the shared mel/embedding models from CDN; you
+   supply icarus.onnx via double-tap 👂. Emits a beep and captures your command on wake. */
+const OWW={ort:null,mel:null,emb:null,ww:null,ctx:null,src:null,node:null,stream:null,
+  melBuf:[],embBuf:[],active:false,thresh:0.5,busy:false};
+const owwModel=()=>localStorage.getItem('oww_model')||'';
+const owwReady=()=>!!owwModel();
+function b64ToBuf(b64){const bin=atob(b64);const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u;}
+async function setupOWW(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.onnx';
   inp.onchange=async()=>{const f=inp.files&&inp.files[0];if(!f)return;
-    const buf=new Uint8Array(await f.arrayBuffer());let s='';for(const b of buf)s+=String.fromCharCode(b);
-    localStorage.setItem('pico_ppn',btoa(s));
-    addMsg('b','Trained “Borfoli” wake word saved, Sir. Tap 👂 to start it.');};
-  addMsg('b','AccessKey saved. Now pick your <b>Borfoli.ppn</b> file (train it at console.picovoice.ai → Porcupine → type “Borfoli” → platform <b>Web (WASM)</b> → download).');
+    const buf=new Uint8Array(await f.arrayBuffer());let s='';const CH=8192;
+    for(let i=0;i<buf.length;i+=CH)s+=String.fromCharCode.apply(null,buf.subarray(i,i+CH));
+    try{localStorage.setItem('oww_model',btoa(s));addMsg('b','Trained “Icarus” model loaded, Sir. Tap 👂 to start it.');}
+    catch(_){addMsg('b','That model is too large for browser storage, Sir — retrain with fewer steps or tell me and I’ll host it.');}};
+  addMsg('b','Pick your <b>icarus.onnx</b> (from the Colab). No key needed.');
   inp.click();
 }
-function beep(){try{const c=new(window.AudioContext||window.webkitAudioContext)();const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.06;o.start();o.stop(c.currentTime+.12);}catch(_){}}
-async function picoCapture(){
-  // pause Porcupine's mic, capture one command with the browser recognizer, then resume
-  try{if(wvp&&pico)await wvp.unsubscribe(pico);}catch(_){}
-  if(!SR){try{if(wvp&&pico)await wvp.subscribe(pico);}catch(_){}; return;}
+async function owwCapture(){
+  if(OWW.busy)return;OWW.busy=true;
+  if(!SR){OWW.busy=false;return;}
   const r=new SR();r.lang='en-US';r.interimResults=true;r.continuous=false;let f='';
   $('wake').classList.add('rec');$('inp').placeholder='Listening, Sir…';
   r.onresult=e=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++){t+=e.results[i][0].transcript;if(e.results[i].isFinal)f+=e.results[i][0].transcript;}$('inp').value=(f||t).trim();};
-  r.onend=async()=>{$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';const v=$('inp').value.trim();if(v)send();
-    try{if(wvp&&pico&&picoActive)await wvp.subscribe(pico);}catch(_){}};
+  r.onend=()=>{$('wake').classList.remove('rec');$('inp').placeholder='Speak or type your instruction, Sir…';const v=$('inp').value.trim();if(v)send();setTimeout(()=>{OWW.busy=false;},800);};
   try{r.start();}catch(_){r.onend();}
 }
-async function startPico(){
-  const {key,ppn}=picoCfg();
+async function owwProcess(chunk){
+  if(!OWW.active||window.__speaking||OWW.busy)return;
+  const ort=OWW.ort;
   try{
-    const P=await import('https://cdn.jsdelivr.net/npm/@picovoice/porcupine-web/+esm');
-    const W=await import('https://cdn.jsdelivr.net/npm/@picovoice/web-voice-processor/+esm');
-    pico=await P.PorcupineWorker.create(key,[{base64:ppn,label:'Borfoli'}],
-      ()=>{if(window.__speaking)return;beep();picoCapture();},
-      {publicPath:'https://cdn.jsdelivr.net/gh/Picovoice/porcupine@master/lib/common/porcupine_params.pv'});
-    wvp=W.WebVoiceProcessor;await wvp.subscribe(pico);picoActive=true;
-    addMsg('b','Trained wake word live, Sir. Say “Borfoli” and I’ll listen for your command.');
-    return true;
-  }catch(e){addMsg('b','Porcupine couldn’t start ('+((e&&e.message)||e)+'), Sir — falling back to browser wake word.');return false;}
+    const at=new ort.Tensor('float32',Float32Array.from(chunk),[1,chunk.length]);
+    const mo=await OWW.mel.run({[OWW.mel.inputNames[0]]:at});
+    const mel=mo[OWW.mel.outputNames[0]];const md=mel.dims,dat=mel.data;
+    const nf=md[md.length-2],nb=md[md.length-1];
+    for(let fr=0;fr<nf;fr++){const row=new Float32Array(nb);for(let b=0;b<nb;b++)row[b]=dat[fr*nb+b]/10+2;OWW.melBuf.push(row);}
+    if(OWW.melBuf.length>240)OWW.melBuf.splice(0,OWW.melBuf.length-240);
+    if(OWW.melBuf.length>=76){
+      const st=OWW.melBuf.length-76,win=new Float32Array(76*32);
+      for(let fr=0;fr<76;fr++)for(let b=0;b<32;b++)win[fr*32+b]=OWW.melBuf[st+fr][b];
+      const et=new ort.Tensor('float32',win,[1,76,32,1]);
+      const eo=await OWW.emb.run({[OWW.emb.inputNames[0]]:et});
+      OWW.embBuf.push(Float32Array.from(eo[OWW.emb.outputNames[0]].data));
+      if(OWW.embBuf.length>48)OWW.embBuf.shift();
+    }
+    if(OWW.embBuf.length>=16){
+      const s=OWW.embBuf.length-16,w=new Float32Array(16*96);
+      for(let i=0;i<16;i++)for(let j=0;j<96;j++)w[i*96+j]=OWW.embBuf[s+i][j];
+      const wo=await OWW.ww.run({[OWW.ww.inputNames[0]]:new ort.Tensor('float32',w,[1,16,96])});
+      const score=wo[OWW.ww.outputNames[0]].data[0];
+      if(score>OWW.thresh){OWW.embBuf=[];beep();owwCapture();}
+    }
+  }catch(_){}
 }
-async function stopPico(){picoActive=false;try{if(wvp&&pico)await wvp.unsubscribe(pico);if(pico)pico.release();}catch(_){}pico=null;}
+async function startOWW(){
+  try{
+    if(!OWW.ort){OWW.ort=await import('https://cdn.jsdelivr.net/npm/onnxruntime-web/+esm');
+      try{OWW.ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';}catch(_){}}
+    const ort=OWW.ort,GH='https://cdn.jsdelivr.net/gh/dscripka/openWakeWord@main/openwakeword/resources/models/';
+    if(!OWW.mel)OWW.mel=await ort.InferenceSession.create(GH+'melspectrogram.onnx');
+    if(!OWW.emb)OWW.emb=await ort.InferenceSession.create(GH+'embedding_model.onnx');
+    OWW.ww=await ort.InferenceSession.create(b64ToBuf(owwModel()));
+    OWW.stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+    OWW.ctx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    OWW.src=OWW.ctx.createMediaStreamSource(OWW.stream);
+    OWW.node=OWW.ctx.createScriptProcessor(1280,1,1);
+    OWW.melBuf=[];OWW.embBuf=[];OWW.active=true;OWW.busy=false;
+    OWW.node.onaudioprocess=e=>owwProcess(e.inputBuffer.getChannelData(0));
+    OWW.src.connect(OWW.node);OWW.node.connect(OWW.ctx.destination);
+    addMsg('b','“Icarus” wake word live, Sir — say it and I’ll listen for your command.');
+    return true;
+  }catch(err){addMsg('b','Icarus model couldn’t start ('+((err&&err.message)||err)+'), Sir — using the browser wake word instead.');return false;}
+}
+async function stopOWW(){OWW.active=false;try{if(OWW.node)OWW.node.disconnect();if(OWW.src)OWW.src.disconnect();if(OWW.stream)OWW.stream.getTracks().forEach(t=>t.stop());if(OWW.ctx)await OWW.ctx.close();}catch(_){}OWW.node=OWW.src=OWW.stream=OWW.ctx=null;OWW.ww=null;}
 
 async function toggleWake(){
   wakeOn=!wakeOn;$('wake').classList.toggle('on',wakeOn);
   if(wakeOn){
-    if(picoReady()){const ok=await startPico();if(!ok){webWakeStart();}}
+    if(owwReady()){const ok=await startOWW();if(!ok){webWakeStart();}}
     else{webWakeStart();
-      addMsg('b','Wake word active, Sir — say “Icarus, open my YouTube homepage,” or just “Icarus” then your command.');}
-  }else{await stopPico();webWakeStop();}
+      addMsg('b','Wake word active, Sir — say “Icarus, open my YouTube homepage,” or just “Icarus” then your command. (For the trained model, double-tap 👂 and load your icarus.onnx.)');}
+  }else{await stopOWW();webWakeStop();}
 }
 let wkTimer=null;
 $('wake').onclick=()=>{ if(wkTimer)return; wkTimer=setTimeout(()=>{wkTimer=null;toggleWake();},260); };
-$('wake').ondblclick=()=>{ if(wkTimer){clearTimeout(wkTimer);wkTimer=null;} setupPico(); };
+$('wake').ondblclick=()=>{ if(wkTimer){clearTimeout(wkTimer);wkTimer=null;} setupOWW(); };
 
 /* ── objectives (local cockpit scratch) ── */
 function objs(){try{return JSON.parse(localStorage.getItem('borf_obj')||'[]')}catch(_){return[]}}
