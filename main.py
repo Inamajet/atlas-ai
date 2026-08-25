@@ -2099,7 +2099,10 @@ def chat():
     # ── Mani OS read queries ───────────────────────────────────────────────
     _mani_data_kw = ['calories','protein','weight','task','workout','streak',
                      'water','pull','trade','lore','net worth','check','supp']
-    if (any(k in msg_lo for k in MANI_OS_TRIGGERS) or
+    # If it's an action/browse request (open, close, search a site, etc.), it must go to
+    # the agent's real tools — NOT the Mani-OS dashboard reader. "open X and check my Y"
+    # was wrongly grabbed here by the word "check".
+    if (not _wants_agent(msg_lo)) and (any(k in msg_lo for k in MANI_OS_TRIGGERS) or
             (any(k in msg_lo for k in _MANI_READ_KW) and any(k in msg_lo for k in _mani_data_kw))):
         reply = mani_os_read_answer(msg, history, facts)
         history.append({"role": "user", "content": msg})
