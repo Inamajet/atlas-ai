@@ -2969,7 +2969,11 @@ $('wake').ondblclick=()=>{ if(wkTimer){clearTimeout(wkTimer);wkTimer=null;} setu
    You talk; it waits for a real pause (not a twitchy cutoff), replies out loud, then
    listens again automatically. It never listens while it's speaking (no self-echo). */
 let convOn=false,convRec=null,convSil=null,convText='',convProcessing=false;
-const CONV_PAUSE=1700;                                 // ms of silence that means "you're done talking"
+const CONV_PAUSE=2000;                                 // silence (ms) after a COMPLETE thought
+const CONV_PAUSE_LONG=4000;                            // wait longer if you seem mid-sentence
+const FILLER=/^((um+|uh+|er+|hmm+|so|well|okay|ok|like|yeah)[\s,]+)+/i;
+const INCOMPLETE=/\b(can|could|would|will|i|you|to|the|a|an|and|or|for|with|my|of|but|please|then|also|open|go|show|tell|check|do|is|are|want|need|let|help|get|find|make|put|set|give|say|play|look|read|write|send)$/i;
+function cleanUtter(t){return (t||'').replace(FILLER,'').trim();}
 function convWaitSpeak(){return new Promise(res=>{const iv=setInterval(()=>{if(!window.__speaking){clearInterval(iv);res();}},120);setTimeout(()=>{clearInterval(iv);res();},20000);});}
 function convListen(){
   if(!convOn||convProcessing)return;
@@ -2982,7 +2986,11 @@ function convListen(){
     for(let i=0;i<e.results.length;i++){const tr=e.results[i][0].transcript;if(e.results[i].isFinal)fin+=tr+' ';else iv+=tr;}
     convText=(fin+iv).trim();$('inp').value=convText;
     clearTimeout(convSil);
-    if(convText)convSil=setTimeout(convTurn,CONV_PAUSE);  // send only after a real pause
+    const t=cleanUtter(convText);
+    if(!t)return;                                          // pure filler — keep waiting
+    // If you seem mid-sentence (short, or ending on a hanging word), wait much longer.
+    const midSentence = t.split(/\s+/).length<3 || INCOMPLETE.test(t);
+    convSil=setTimeout(convTurn, midSentence?CONV_PAUSE_LONG:CONV_PAUSE);
   };
   convRec.onerror=ev=>{const er=ev&&ev.error;if(er==='not-allowed'||er==='service-not-allowed'){convOn=false;$('conv').classList.remove('on');addMsg('b','I need microphone permission for conversation mode, Sir.');}};
   convRec.onend=()=>{if(convOn&&!convProcessing&&!window.__speaking){setTimeout(()=>{if(convOn&&!convProcessing)try{convRec.start();}catch(_){}},150);}};
@@ -2990,8 +2998,8 @@ function convListen(){
 }
 async function convTurn(){
   clearTimeout(convSil);
-  const text=(convText||'').trim();convText='';
-  if(!text||convProcessing)return;
+  const text=cleanUtter(convText);convText='';
+  if(!text||text.split(/\s+/).length<2||convProcessing)return;   // ignore empty/one-word fragments
   convProcessing=true;
   try{convRec&&convRec.abort();}catch(_){}              // stop listening while it thinks + talks
   $('inp').value='';addMsg('u',text);$('core').classList.add('think');
