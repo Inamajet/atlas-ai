@@ -1797,8 +1797,30 @@ def check_discord_answer(msg, history, facts):
     return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
 
 def check_canvas_answer(msg, history, facts):
-    """Open his real FISD Canvas in the browser, read it, and pull out upcoming
-    assignments/tests. Deterministic — no flaky tool-loop, no invented work."""
+    """Reliable Canvas read: the API (with token) first — ALL courses, real due dates;
+    browser scrape as fallback. No flaky tool-loop, no invented work."""
+    # ── Preferred: Canvas API (complete + reliable across every course) ──
+    api = fetch_canvas_assignments()
+    if isinstance(api, list) and api:
+        lines = []
+        for a in api[:30]:
+            due = a.get("due"); duetxt = "no due date"
+            if due:
+                try:
+                    duetxt = "due " + datetime.fromisoformat(due.replace("Z", "+00:00")).strftime("%a %b %d")
+                except Exception:
+                    duetxt = "due " + due[:10]
+            lines.append(f"- [{a.get('course','')}] {a.get('name','')} — {duetxt}")
+        listing = "\n".join(lines)
+        prompt = (JARVIS_PROMPT + "\n\n" + (facts or "") + f"\n\nMani asked: \"{msg}\"\n\n"
+                  f"His REAL Canvas assignments across ALL courses (from the Canvas API):\n{listing}\n\n"
+                  "Give a sharp rundown: what to knock out TODAY, what's due soonest, flag anything urgent or "
+                  "overdue. Be specific with dates. Do NOT invent anything beyond this list.")
+        return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=700)
+    if isinstance(api, dict) and api.get("error"):
+        return (f"Canvas API error, Sir: {api['error']}. Check the CANVAS_TOKEN is valid "
+                "(Canvas → Account → Settings → New Access Token).")
+    # api is None → no token set. Try the browser scrape, and nudge toward the API.
     if not ext_online():
         return ("I need your browser extension live to read Canvas, Sir — start the Borfoli engine and make sure "
                 "the extension shows connected, then ask again.")
@@ -2330,6 +2352,47 @@ def _is_web_target(t):
 # Mani's personal site shortcuts — resolve a spoken name to the exact URL so browsing
 # lands on the right page instead of guessing. (Correct the Canvas domain if it differs.)
 _CANVAS_URL = "https://fisd.instructure.com"
+# Canvas API — the reliable way to read ALL assignments across courses. Add CANVAS_TOKEN
+# (Canvas → Account → Settings → New Access Token) in Render to enable it.
+CANVAS_TOKEN = os.environ.get("CANVAS_TOKEN", "")
+CANVAS_BASE = os.environ.get("CANVAS_BASE", _CANVAS_URL).rstrip("/")
+
+def _canvas_get(path, params=None):
+    r = requests.get(f"{CANVAS_BASE}/api/v1/{path}",
+                     headers={"Authorization": f"Bearer {CANVAS_TOKEN}"},
+                     params=params or {}, timeout=15)
+    return r.json() if r.status_code == 200 else None
+
+def fetch_canvas_assignments():
+    """All upcoming assignments across active courses via the Canvas API. None if no token,
+    list of {course,name,due,url} otherwise, or {'error':...}."""
+    if not CANVAS_TOKEN:
+        return None
+    try:
+        out = []
+        courses = _canvas_get("courses", {"enrollment_state": "active", "per_page": 50}) or []
+        cmap = {c["id"]: c.get("name", "course") for c in courses if isinstance(c, dict) and c.get("id")}
+        for cid, cname in list(cmap.items())[:12]:
+            for a in (_canvas_get(f"courses/{cid}/assignments",
+                                  {"bucket": "upcoming", "order_by": "due_at", "per_page": 30}) or []):
+                if isinstance(a, dict):
+                    out.append({"course": cname, "name": a.get("name", "assignment"),
+                                "due": a.get("due_at"), "url": a.get("html_url", "")})
+        for t in (_canvas_get("users/self/todo") or []):
+            asn = (t or {}).get("assignment") or {}
+            if asn:
+                out.append({"course": t.get("context_name", ""), "name": asn.get("name", "assignment"),
+                            "due": asn.get("due_at"), "url": asn.get("html_url", "")})
+        seen, uniq = set(), []
+        for a in out:
+            k = (a["name"], a.get("due"))
+            if k not in seen:
+                seen.add(k); uniq.append(a)
+        uniq.sort(key=lambda a: a.get("due") or "9999")
+        return uniq
+    except Exception as e:
+        return {"error": str(e)[:150]}
+
 PERSONAL_SITES = {k: _CANVAS_URL for k in (
     "canvas", "my canvas", "fisd", "fisd canvas", "school canvas", "my courses",
     "my assignments", "fic canvas", "fisc canvas", "fised canvas", "fisdcanvas",
