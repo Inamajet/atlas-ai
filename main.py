@@ -1950,6 +1950,23 @@ def study():
     prof = run_study()
     return jsonify({"ok": bool(prof), "profile": prof})
 
+@app.route("/profile", methods=["GET", "POST"])
+def profile_api():
+    """View / clean the learned profile. POST {remove:'text'} drops matching lines,
+    {clear:true} wipes it, {set:'...'} replaces it."""
+    if request.method == "POST":
+        d = request.json or {}
+        if d.get("clear"):
+            save_profile(""); return jsonify({"ok": True, "profile": ""})
+        prof = load_profile()
+        for rem in ([d["remove"]] if isinstance(d.get("remove"), str) else (d.get("remove") or [])):
+            prof = "\n".join(l for l in prof.splitlines() if rem.lower() not in l.lower())
+        if isinstance(d.get("set"), str):
+            prof = d["set"]
+        save_profile(prof)
+        return jsonify({"ok": True, "profile": prof})
+    return jsonify({"profile": load_profile()})
+
 @app.route("/galaxy-data")
 def galaxy_data():
     """Nodes + links from the synced Obsidian vault, for the 3D knowledge galaxy."""
