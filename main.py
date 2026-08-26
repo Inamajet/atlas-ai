@@ -375,20 +375,38 @@ _ADAPT_SIGNALS = ("i prefer", "i'd prefer", "i like it when", "i don't like", "i
                   "never ", "from now on", "i meant", "actually i", "next time", "remember to",
                   "make sure you", "i want you to", "call me ", "address me", "keep it", "be more",
                   "be less", "in the future")
+# Signals that Mani is CORRECTING Borfoli's reasoning/answer — these become durable
+# "reasoning lessons" that get injected into every future reply and applied.
+_LESSON_SIGNALS = ("that's wrong", "thats wrong", "that is wrong", "you're wrong", "youre wrong",
+                   "incorrect", "you should have", "you should've", "you shouldve", "you missed",
+                   "you didn't consider", "you didnt consider", "wrong because", "not right",
+                   "the better way", "better approach", "think again", "reconsider", "you got that wrong",
+                   "the real reason", "that's not how", "thats not how", "no, the", "no the reason",
+                   "you failed to", "you overlooked", "the correct", "actually the")
 def adapt_from_exchange(user_msg, reply):
-    """Real-time learning: when Mani states a preference or correction, record it as a
-    durable rule in his profile so Borfoli applies it going forward."""
+    """Real-time learning: capture Mani's preferences AND his reasoning corrections as
+    durable entries in his profile (injected into every reply, so they compound over time)."""
     m = (user_msg or "").strip()
     lo = m.lower()
-    if len(m) < 6 or len(m) > 240: return
-    if not any(s in lo for s in _ADAPT_SIGNALS): return
+    if len(m) < 6 or len(m) > 400: return
+    is_lesson = any(s in lo for s in _LESSON_SIGNALS)
+    is_pref = any(s in lo for s in _ADAPT_SIGNALS)
+    if not (is_lesson or is_pref): return
     prof = load_profile()
     if m.lower() in prof.lower(): return
-    marker = "## Learned preferences & rules"
+    marker = "## Reasoning lessons (apply these)" if is_lesson else "## Learned preferences & rules"
     if marker not in prof:
         prof = (prof + ("\n\n" if prof else "") + marker).strip()
-    prof = prof + f"\n- [{datetime.now().strftime('%Y-%m-%d')}] {m}"
-    save_profile(prof[-11000:])
+    # insert under the right section header
+    lines = prof.split("\n")
+    entry = f"- [{datetime.now().strftime('%Y-%m-%d')}] {m}"
+    try:
+        idx = next(i for i, l in enumerate(lines) if l.strip() == marker)
+        lines.insert(idx + 1, entry)
+        prof = "\n".join(lines)
+    except StopIteration:
+        prof = prof + "\n" + entry
+    save_profile(prof[-12000:])
 
 def extract_facts(user_msg, assistant_reply):
     keywords = ["my name", "i am", "i'm", "i work", "i live", "i like", "i hate", "i want", "my goal", "my project", "remember"]
@@ -2442,7 +2460,9 @@ def chat():
     facts = (convo_note + "\n" + get_live_context() + "\n\n" + base_facts).strip()
     _prof = load_profile()                # the adaptive, learned profile of Mani
     if _prof:
-        facts = (facts + "\n\n[WHAT I'VE LEARNED ABOUT MANI — adapt to this]\n" + _prof).strip()
+        facts = (facts + "\n\n[WHAT I'VE LEARNED ABOUT MANI — adapt to this. Any 'Reasoning lessons' "
+                 "below are HARD RULES: Mani corrected you on these, so apply each one and NEVER repeat "
+                 "a mistake he already corrected.]\n" + _prof).strip()
     vault_ctx = vault_context(msg)        # ambient Obsidian recall, per-request only
     if vault_ctx:
         facts = (facts + "\n\n" + vault_ctx).strip()
