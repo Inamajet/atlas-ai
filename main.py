@@ -121,8 +121,7 @@ MEGA_CHAIN = [
     # Every id below is confirmed to EXIST on its provider; providers are explicit so
     # routing never guesses. Order: fast+strong first, heavy brains as deeper fallback.
     # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
-    ("claude-opus-4-8",                              "anthropic"),
-    ("claude-sonnet-5",                              "anthropic"),
+    ("claude-sonnet-4-6",                            "anthropic"),   # Sonnet 4.6 (Mani's choice) — only if ANTHROPIC_API_KEY set
     # Tier 1 — PRIMARY: Gemini 2.5 Flash (smartest free, best prose) leads for quality.
     # When Gemini's daily quota is spent, the SMART fallback is NVIDIA Nemotron — strong
     # reasoning with CLEAN output (no harmony truncation) — so quality barely drops.
@@ -1204,7 +1203,7 @@ _last_tool_err = {"e": ""}
 _TOOL_CHAIN = [
     # Native tool-calling providers (rebuilt Aug 2026, live ids only). All support
     # OpenAI-style tool calls. Cerebras/old-Groq-Llama removed (paywalled / 404).
-    ("claude-opus-4-8",                         "anthropic"),   # only if key set — flawless tools
+    ("claude-sonnet-4-6",                       "anthropic"),   # Sonnet 4.6 — Claude-quality tool-driving (only if ANTHROPIC_API_KEY set)
     ("openai/gpt-oss-120b",                     "groq"),        # FAST (0.2s) tool-caller — leads so the browse loop is snappy
     ("gemini-2.5-flash",                        "google"),      # smart fallback
     ("nvidia/llama-3.3-nemotron-super-49b-v1.5","nvidia"),      # reasoning tool-caller
