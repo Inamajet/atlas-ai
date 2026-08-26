@@ -1255,6 +1255,75 @@ def _parse_text_tools(content):
             seen.add(k); out.append((n, a))
     return out
 
+_BRIDGE_TOOLS_DESC = (
+    'browse_open   {"url":"canvas"}      open a site in Mani\'s REAL logged-in browser + read it (use "canvas" for school Canvas; a URL; or search words)\n'
+    'browse_look   {}                    re-read the current page\n'
+    'browse_click  {"ref": 12}           click the element with that [number]\n'
+    'browse_type   {"ref": 3,"text":"x","enter":true}  type into an element\n'
+    'browse_scroll {"amount": 900}       scroll down (negative = up)\n'
+    'pc_open       {"target":"notepad"}  open a local app/file\n'
+    'close_app     {"app":"discord"}     close an app\n'
+    'see_screen    {"question":"..."}    look at Mani\'s actual screen\n'
+    'write_note    {"title":"..","body":".."}  save a note to his Obsidian vault\n'
+    'remember      {"text":".."}         save a fact/reminder to long-term memory\n'
+)
+def _bridge_tool(name, args):
+    if name == "write_note":
+        return run_on_pc("write_note", {"title": args.get("title", "Note"), "body": args.get("body", "")}, timeout=30)
+    fn = _TOOL_FNS.get(name)
+    if not fn:
+        return f"(no such tool: {name})"
+    try:
+        return str(fn(args))
+    except Exception as e:
+        return f"(tool error: {e})"
+
+def bridge_agent(msg, history, facts):
+    """Sonnet-driven agent loop — reliable step-by-step action. Sonnet picks ONE action
+    per turn; Borfoli runs it and feeds the result back. Falls back to the free-model
+    agent if the bridge dies mid-task."""
+    sys = (JARVIS_PROMPT + "\n\n" + (facts or "") +
+           "\n\n=== ACTING ON MANI'S COMPUTER (real tools) ===\n" + _BRIDGE_TOOLS_DESC +
+           "\nWeb tasks use his REAL browser where he's already logged in (Canvas, YouTube, Gmail...). "
+           "ALWAYS read a page's returned [numbered] elements before clicking. Do the FULL job "
+           "(open -> read -> extract -> save) before finishing.\n\n"
+           "Output EXACTLY ONE line each turn — nothing else, no prose around it:\n"
+           "  ACT <tool> <json-args>\n"
+           "  SAY <final message to Mani>\n"
+           "Never print raw JSON to Mani. Never SAY you did something you didn't ACT.")
+    steps, remembered = [], []
+    for _ in range(8):
+        p = sys + "\n\nTASK: " + msg + (("\n\nPROGRESS SO FAR:\n" + "\n".join(steps)) if steps else "") + "\n\nYour next single line:"
+        out = run_on_pc("claude_ask", {"system": "", "prompt": p}, timeout=155)
+        if not out or out.startswith("__BRIDGE_") or out.startswith("Your PC agent didn't"):
+            return agent_answer(msg, history, facts)
+        line = out.strip().splitlines()[0].strip()
+        up = line.upper()
+        if up.startswith("SAY"):
+            if remembered:
+                try:
+                    bf, hist = load_memory()
+                    bf = (bf + "\n" + "\n".join(f"[{datetime.now().strftime('%Y-%m-%d')}] {r}" for r in remembered)).strip()
+                    save_memory(bf, hist)
+                except Exception: pass
+            return line[3:].strip(" :-") or "Done, Sir."
+        if up.startswith("ACT"):
+            rest = line[3:].strip()
+            name = rest.split()[0] if rest else ""
+            argstr = rest[len(name):].strip()
+            try: args = json.loads(argstr) if argstr.startswith("{") else {}
+            except Exception: args = {}
+            if name == "remember":
+                remembered.append((args.get("text") or "").strip()); res = "saved to memory"
+            else:
+                res = _bridge_tool(name, args)
+            steps.append(f"ACT {name} {argstr}\n-> {str(res)[:1400]}")
+        else:
+            if line.startswith("{"):
+                steps.append("(that was invalid — reply with ACT or SAY only)"); continue
+            return out.strip()
+    return "I got partway through, Sir, but hit my action limit — tell me to keep going."
+
 def agent_answer(msg, history, facts):
     """Native tool-calling agent (reliable, no confabulation). Uses _tool_completion's
     provider chain; if a model emits tool calls as TEXT we parse those too, but only
@@ -1290,10 +1359,13 @@ def agent_answer(msg, history, facts):
                 continue
             # Safety net: never leak raw tool-call syntax to Mani. Re-prompt for a clean answer.
             raw = choice.content or ""
-            if re.search(r'<\s*/?\s*(?:function|tool)\b|"name"\s*:\s*"[a-z_]+"\s*,\s*"(?:arguments|parameters)"', raw, re.I):
+            if re.search(r'<\s*/?\s*(?:function|tool)\b|"name"\s*:\s*"[a-z_]+"\s*,\s*"(?:arguments|parameters)"'
+                         r'|"(?:action|tool|tool_name|function)"\s*:\s*"|^\s*\{\s*"(?:action|query|tool|name)"'
+                         r'|"query"\s*:\s*"', raw, re.I | re.M):
                 msgs.append({"role": "user", "content":
-                    "That wasn't valid — either call a tool correctly or, if you're done, just answer Mani "
-                    "in plain prose with NO tool/function syntax."})
+                    "That wasn't a real tool call — you emitted JSON as text. Use ONLY the actual tools provided "
+                    "(browse_open, browse_look, etc.); there is NO 'web_search' tool. If you're done, answer Mani "
+                    "in plain prose with NO JSON, braces, or tool syntax."})
                 continue
             return raw or "Done."
         msgs.append({"role": "assistant", "content": choice.content or "",
@@ -1722,6 +1794,26 @@ def check_discord_answer(msg, history, facts):
     prompt = (f"{JARVIS_PROMPT}\n\n{facts}\n\nMani asked: \"{msg}\"\n\nRecent Discord messages across his watched "
               f"channels:\n{listing}\n\nSummarize what's happening: key topics, anything directed at him or needing a "
               "response, notable activity. Be concise. Do NOT invent messages not listed.")
+    return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
+
+def check_canvas_answer(msg, history, facts):
+    """Open his real FISD Canvas in the browser, read it, and pull out upcoming
+    assignments/tests. Deterministic — no flaky tool-loop, no invented work."""
+    if not ext_online():
+        return ("I need your browser extension live to read Canvas, Sir — start the Borfoli engine and make sure "
+                "the extension shows connected, then ask again.")
+    # Try the dashboard (To Do / upcoming) then the calendar-ish courses view.
+    snap = run_on_browser("browser_open", {"url": _CANVAS_URL}, timeout=50)
+    _, src, body = _snap_text(snap)
+    if not body or len(body) < 60 or "can't find your login" in body.lower():
+        return ("Canvas didn't load properly, Sir — it may need you to log in once in the Borfoli tab. "
+                "Open it there, sign in, then ask me again and I'll read your assignments.")
+    prompt = (JARVIS_PROMPT + "\n\n" + (facts or "") + f"\n\nMani asked: \"{msg}\"\n\n"
+              f"Here is the text of his FISD Canvas dashboard:\n{body[:4500]}\n\n"
+              "From this, list his UPCOMING assignments and tests with their due dates (look at the To-Do, "
+              "'Coming Up', recent-activity, and course items). Format as a short dated list, soonest first. "
+              "If the dashboard shows nothing upcoming, say so plainly and suggest checking the Calendar. "
+              "Do NOT invent any assignment, test, or date that isn't in the text above.")
     return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
 
 CREW_ROLES = {
@@ -2237,15 +2329,11 @@ def _is_web_target(t):
 
 # Mani's personal site shortcuts — resolve a spoken name to the exact URL so browsing
 # lands on the right page instead of guessing. (Correct the Canvas domain if it differs.)
-PERSONAL_SITES = {
-    "canvas": "https://fisd.instructure.com",
-    "my canvas": "https://fisd.instructure.com",
-    "fisd": "https://fisd.instructure.com",
-    "fisd canvas": "https://fisd.instructure.com",
-    "school canvas": "https://fisd.instructure.com",
-    "my courses": "https://fisd.instructure.com/courses",
-    "my assignments": "https://fisd.instructure.com",
-}
+_CANVAS_URL = "https://fisd.instructure.com"
+PERSONAL_SITES = {k: _CANVAS_URL for k in (
+    "canvas", "my canvas", "fisd", "fisd canvas", "school canvas", "my courses",
+    "my assignments", "fic canvas", "fisc canvas", "fised canvas", "fisdcanvas",
+    "fizz canvas", "the canvas", "canves", "canvis")}
 def _resolve_site(u):
     return PERSONAL_SITES.get((u or "").strip().lower().lstrip("open ").strip(), u)
 
@@ -2361,6 +2449,21 @@ def chat():
         save_memory(base_facts, history)
         return jsonify({"reply": reply, "intent": "clip"})
 
+    # ── Canvas / assignments → dedicated reliable reader (not the flaky tool-loop) ──
+    _canvas_q = ("canvas" in msg_lo or "canves" in msg_lo or "canvis" in msg_lo
+                 or (any(w in msg_lo for w in ("assignment", "assignments", "homework", "due", "tests coming",
+                        "test coming", "upcoming test", "upcoming assignment", "what's due", "whats due",
+                        "coming up soon", "study for"))
+                     and not any(k in msg_lo for k in ("my email", "discord"))))
+    if _canvas_q and not any(k in msg_lo for k in ("remember that", "note that")):
+        reply = check_canvas_answer(msg, history, facts)
+        # Put it in memory so it can recall/remind later.
+        if reply and "didn't load" not in reply and "need your browser" not in reply:
+            base_facts = (base_facts + f"\n[CANVAS {datetime.now().strftime('%Y-%m-%d')}] {reply[:400]}").strip()
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "canvas"})
+
     # ── "Study me" → distil a refreshed profile from vault + history (adaptation) ──
     if any(p in msg_lo for p in ("study me", "learn about me", "adapt to me", "get to know me",
                                  "study my notes", "update your understanding", "recalibrate")):
@@ -2433,8 +2536,8 @@ def chat():
         msgs.append({"role": "user", "content": msg})
         reply = smart_chat(msgs, max_tokens=400)
     elif intent in ("search", "browse", "agent"):
-        # Agentic loop — real web browsing + dashboard control, chained
-        reply = agent_answer(msg, history, facts)
+        # Agentic loop — Sonnet-driven when the bridge is live (reliable), else free-model agent
+        reply = bridge_agent(msg, history, facts) if bridge_online() else agent_answer(msg, history, facts)
     elif intent == "council":
         reply = council_answer(msg, history, facts)
     elif intent == "notes":
