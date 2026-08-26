@@ -351,6 +351,44 @@ def save_memory(facts, history):
         requests.post(f"{SUPABASE_URL}/rest/v1/atlas_memory", headers={**HEADERS, "Prefer": "resolution=merge-duplicates"}, json=payload)
     except: pass
 
+# ── Adaptation: a living, evolving PROFILE of Mani (atlas_memory row 2). Injected into
+# every reply so Borfoli's behavior adapts. Grown in real time from preferences/corrections
+# and periodically distilled from his Obsidian vault + conversation history (/study).
+def load_profile():
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/atlas_memory?id=eq.2", headers=HEADERS)
+        rows = r.json()
+        if rows: return rows[0].get("facts", "") or ""
+    except Exception: pass
+    return ""
+
+def save_profile(text):
+    try:
+        requests.post(f"{SUPABASE_URL}/rest/v1/atlas_memory",
+                      headers={**HEADERS, "Prefer": "resolution=merge-duplicates"},
+                      json={"id": 2, "facts": (text or "")[:12000], "history": "[]"})
+    except Exception: pass
+
+_ADAPT_SIGNALS = ("i prefer", "i'd prefer", "i like it when", "i don't like", "i dont like",
+                  "i hate when", "i hate it when", "don't ", "dont ", "stop ", "always ",
+                  "never ", "from now on", "i meant", "actually i", "next time", "remember to",
+                  "make sure you", "i want you to", "call me ", "address me", "keep it", "be more",
+                  "be less", "in the future")
+def adapt_from_exchange(user_msg, reply):
+    """Real-time learning: when Mani states a preference or correction, record it as a
+    durable rule in his profile so Borfoli applies it going forward."""
+    m = (user_msg or "").strip()
+    lo = m.lower()
+    if len(m) < 6 or len(m) > 240: return
+    if not any(s in lo for s in _ADAPT_SIGNALS): return
+    prof = load_profile()
+    if m.lower() in prof.lower(): return
+    marker = "## Learned preferences & rules"
+    if marker not in prof:
+        prof = (prof + ("\n\n" if prof else "") + marker).strip()
+    prof = prof + f"\n- [{datetime.now().strftime('%Y-%m-%d')}] {m}"
+    save_profile(prof[-11000:])
+
 def extract_facts(user_msg, assistant_reply):
     keywords = ["my name", "i am", "i'm", "i work", "i live", "i like", "i hate", "i want", "my goal", "my project", "remember"]
     if any(k in user_msg.lower() for k in keywords):
@@ -1844,6 +1882,39 @@ def digest():
     return jsonify({"digest": "\n\n".join(p for p in parts if p) or "Nothing pressing, Sir.",
                     "email_linked": GMAIL_APP_PW != "", "discord_linked": bool(DISCORD_BOT_TOKEN and DISCORD_CHANNELS)})
 
+def run_study():
+    """Distill a refreshed profile of Mani from his vault + history + facts. Returns text."""
+    base_facts, history = load_memory()
+    prof = load_profile()
+    vault_txt = ""
+    for c in VAULT_INDEX["chunks"][:70]:
+        vault_txt += f"\n[{c.get('title','')}] {(c.get('text','') or '')[:350]}"
+    hist_txt = "\n".join(f"{h['role']}: {(h.get('content') or '')[:150]}" for h in history[-24:])
+    prompt = ("You maintain an evolving PROFILE of Mani so his assistant (Borfoli) adapts to him. "
+              "Refresh it from the material below.\n\n"
+              f"CURRENT PROFILE:\n{prof or '(none yet)'}\n\n"
+              f"PERSISTENT FACTS:\n{base_facts[:2000]}\n\n"
+              f"RECENT CONVERSATION:\n{hist_txt}\n\n"
+              f"FROM HIS OBSIDIAN NOTES:\n{vault_txt[:4500]}\n\n"
+              "Output a tight refreshed profile in markdown, sections: **Who he is**, "
+              "**Communication style he wants**, **Recurring themes / projects**, **Routines & habits**, "
+              "**Standing preferences & rules** (always/never), **Current focus**. Merge + DEDUPE with the "
+              "current profile, keep every learned rule, under 500 words, concrete only — no fluff, no "
+              "invented details. Only what genuinely helps an assistant serve him better.")
+    refreshed = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=850)
+    if refreshed and not refreshed.strip().startswith("["):
+        save_profile(refreshed)
+        if pc_agent_online():
+            try: run_on_pc("write_note", {"title": "Borfoli — What I know about Mani", "body": refreshed}, timeout=25)
+            except Exception: pass
+        return refreshed
+    return prof
+
+@app.route("/study", methods=["GET", "POST"])
+def study():
+    prof = run_study()
+    return jsonify({"ok": bool(prof), "profile": prof})
+
 @app.route("/galaxy-data")
 def galaxy_data():
     """Nodes + links from the synced Obsidian vault, for the 3D knowledge galaxy."""
@@ -2143,6 +2214,9 @@ def chat():
                   if not history else
                   "[SESSION: CONTINUING conversation — do NOT greet, do NOT say 'Good morning/afternoon', do NOT restate the time or weather. Just answer.]")
     facts = (convo_note + "\n" + get_live_context() + "\n\n" + base_facts).strip()
+    _prof = load_profile()                # the adaptive, learned profile of Mani
+    if _prof:
+        facts = (facts + "\n\n[WHAT I'VE LEARNED ABOUT MANI — adapt to this]\n" + _prof).strip()
     vault_ctx = vault_context(msg)        # ambient Obsidian recall, per-request only
     if vault_ctx:
         facts = (facts + "\n\n" + vault_ctx).strip()
@@ -2189,6 +2263,17 @@ def chat():
         history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": note})
         save_memory(base_facts, history)
         return jsonify({"reply": note, "intent": "remember"})
+
+    # ── "Study me" → distil a refreshed profile from vault + history (adaptation) ──
+    if any(p in msg_lo for p in ("study me", "learn about me", "adapt to me", "get to know me",
+                                 "study my notes", "update your understanding", "recalibrate")):
+        prof = run_study()
+        reply = ("I've studied your notes and our history and refreshed my understanding of you, Sir"
+                 + (" — saved as a note in your vault too" if pc_agent_online() else "") + ". "
+                 "I'll adapt accordingly from here.")
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "study", "profile": prof[:600]})
 
     # ── Gmail READ + Discord WATCH — go straight to the reader, not the tool loop.
     # (Runs BEFORE the Mani-OS route: "check my email" must not be caught by "check".)
@@ -2282,6 +2367,8 @@ def chat():
 
     new_fact = extract_facts(msg, reply)
     if new_fact: base_facts = (base_facts + "\n" + new_fact).strip()
+    try: adapt_from_exchange(msg, reply)   # real-time learning: capture preferences/corrections
+    except Exception: pass
     history.append({"role": "user", "content": msg})
     history.append({"role": "assistant", "content": reply})
     save_memory(base_facts, history)
