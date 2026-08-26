@@ -120,8 +120,9 @@ MEGA_CHAIN = [
     # removed (now paywalled, 402). Old Groq Llama ids removed (Groq wiped them, 404).
     # Every id below is confirmed to EXIST on its provider; providers are explicit so
     # routing never guesses. Order: fast+strong first, heavy brains as deeper fallback.
-    # Tier 0 — Claude: smartest AND fast. Only fires if ANTHROPIC_API_KEY is set.
-    ("claude-sonnet-4-6",                            "anthropic"),   # Sonnet 4.6 (Mani's choice) — only if ANTHROPIC_API_KEY set
+    # NOTE: no paid Anthropic here on purpose — CHAT/summaries stay FREE (the free CLI
+    # bridge covers smart chat; free models cover the rest). Paid Sonnet is used only for
+    # ACTIONS (the _TOOL_CHAIN), so a browse costs pennies but chatting never does.
     # Tier 1 — PRIMARY: Gemini 2.5 Flash (smartest free, best prose) leads for quality.
     # When Gemini's daily quota is spent, the SMART fallback is NVIDIA Nemotron — strong
     # reasoning with CLEAN output (no harmony truncation) — so quality barely drops.
