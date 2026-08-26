@@ -1488,6 +1488,39 @@ def vision_call(b64, prompt, max_tokens=1200):
             continue
     return None
 
+def bridge_online():
+    """Is the real-Claude CLI bridge available? (agent running + claude installed on the PC)"""
+    try:
+        return pc_agent_online() and bool(os_telemetry.get("bridge"))
+    except Exception:
+        return False
+
+def _msgs_to_prompt(msgs):
+    parts = []
+    for m in msgs:
+        role = m.get("role"); c = (m.get("content") or "")
+        if role == "user": parts.append(f"[Mani]: {c}")
+        elif role == "assistant": parts.append(f"[Borfoli]: {c}")
+    parts.append("Respond as Borfoli to Mani's latest message. Reply directly — no preamble, no meta.")
+    return "\n\n".join(parts)
+
+def smart_chat(msgs, max_tokens=700):
+    """PRIMARY BRAIN: real Claude via the local subscription bridge when available;
+    automatically falls back to the free-model chain when Claude is rate-limited, logged
+    out, or the agent is offline. This is what makes Borfoli genuinely smart."""
+    if bridge_online():
+        system = "\n\n".join(m.get("content", "") for m in msgs if m.get("role") == "system")
+        convo = _msgs_to_prompt([m for m in msgs if m.get("role") != "system"])
+        try:
+            res = run_on_pc("claude_ask", {"system": system, "prompt": convo}, timeout=155)
+            if res and not res.startswith("__BRIDGE_") and not res.startswith("Your PC agent didn't"):
+                _last_win["m"] = "claude-cli (your subscription)"
+                return _clean_out(res)
+        except Exception:
+            pass
+        # bridge failed (rate-limited / logged out / error) → free models below
+    return groq_chat(FAST_MODEL, msgs, max_tokens=max_tokens)
+
 def fast_answer(msg, history, facts):
     msgs = [{"role": "system", "content": JARVIS_PROMPT}]
     ctx = []
@@ -1497,7 +1530,7 @@ def fast_answer(msg, history, facts):
     if ctx: msgs.append({"role": "system", "content": "\n\n".join(ctx)})
     for h in history[-10:]: msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": msg})
-    return groq_chat(FAST_MODEL, msgs)
+    return smart_chat(msgs)
 
 def search_answer(msg, history, facts):
     search_results = web_search(msg)
@@ -1840,6 +1873,7 @@ def system_status():
                    "vision": "Groq Llama-4 Scout", "list": active},
         "agent": agent,
         "extension": ext_online(),
+        "bridge": bridge_online(),
         "mani_os": {"online": mani_online},
         "providers": {"groq": client is not None, "cerebras": cerebras_client is not None,
                       "nvidia": nv_client is not None, "openrouter": or_client is not None,
@@ -2371,7 +2405,7 @@ def chat():
         for h in history[-6:]:           # so he knows it's an ongoing chat (no re-greeting)
             msgs.append({"role": h["role"], "content": (h.get("content") or "")[:500]})
         msgs.append({"role": "user", "content": msg})
-        reply = groq_chat(FAST_MODEL, msgs, max_tokens=300)
+        reply = smart_chat(msgs, max_tokens=400)
     elif intent in ("search", "browse", "agent"):
         # Agentic loop — real web browsing + dashboard control, chained
         reply = agent_answer(msg, history, facts)
