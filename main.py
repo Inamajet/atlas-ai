@@ -1958,12 +1958,21 @@ def profile_api():
         d = request.json or {}
         if d.get("clear"):
             save_profile(""); return jsonify({"ok": True, "profile": ""})
+        removes = [d["remove"]] if isinstance(d.get("remove"), str) else (d.get("remove") or [])
         prof = load_profile()
-        for rem in ([d["remove"]] if isinstance(d.get("remove"), str) else (d.get("remove") or [])):
+        for rem in removes:
             prof = "\n".join(l for l in prof.splitlines() if rem.lower() not in l.lower())
         if isinstance(d.get("set"), str):
             prof = d["set"]
         save_profile(prof)
+        # Deep clean: also scrub persistent memory (row 1) — facts lines + history turns
+        # that mention the term, so the model stops seeing it.
+        if removes:
+            bf, hist = load_memory()
+            for rem in removes:
+                bf = "\n".join(l for l in (bf or "").splitlines() if rem.lower() not in l.lower())
+            hist = [h for h in hist if not any(rem.lower() in (h.get("content") or "").lower() for rem in removes)]
+            save_memory(bf, hist)
         return jsonify({"ok": True, "profile": prof})
     return jsonify({"profile": load_profile()})
 
