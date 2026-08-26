@@ -1868,7 +1868,7 @@ def system_status():
                  "clock": n.strftime("%I:%M %p").lstrip("0"), "hms": n.strftime("%H:%M:%S"),
                  "part": part, "location": "Frisco, TX"},
         "weather": _weather_full(),
-        "brains": {"active": len(active), "primary": (active[0]["model"] if active else FAST_MODEL),
+        "brains": {"active": len(active), "primary": ("claude-sonnet-4-6 · your sub" if bridge_online() else (active[0]["model"] if active else FAST_MODEL)),
                    "nvidia": nv_client is not None, "claude": claude_client is not None,
                    "vision": "Groq Llama-4 Scout", "list": active},
         "agent": agent,
