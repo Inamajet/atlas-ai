@@ -1162,6 +1162,8 @@ _TOOL_FNS = {
     "browse_click":  lambda a: run_on_browser("browser_click", {"ref": a.get("ref")}, timeout=30),
     "browse_type":   lambda a: run_on_browser("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
     "browse_scroll": lambda a: run_on_browser("browser_scroll", {"amount": a.get("amount", 600)}, timeout=25),
+    "browse_links":  lambda a: run_on_browser("browser_links", {}, timeout=25),
+    "browse_read":   lambda a: run_on_browser("browser_read", {}, timeout=25),
 }
 
 AGENT_INSTRUCTIONS = (
@@ -1846,23 +1848,48 @@ def check_canvas_answer(msg, history, facts):
     if isinstance(api, dict) and api.get("error"):
         return (f"Canvas API error, Sir: {api['error']}. Check the CANVAS_TOKEN is valid "
                 "(Canvas → Account → Settings → New Access Token).")
-    # api is None → no token set. Try the browser scrape, and nudge toward the API.
+    # api is None → no token. FREE deterministic browser crawl: dashboard + every course's
+    # assignments page, following real links (no smart model needed to navigate).
     if not ext_online():
         return ("I need your browser extension live to read Canvas, Sir — start the Borfoli engine and make sure "
                 "the extension shows connected, then ask again.")
-    # Try the dashboard (To Do / upcoming) then the calendar-ish courses view.
-    snap = run_on_browser("browser_open", {"url": _CANVAS_URL}, timeout=50)
-    _, src, body = _snap_text(snap)
-    if not body or len(body) < 60 or "can't find your login" in body.lower():
-        return ("Canvas didn't load properly, Sir — it may need you to log in once in the Borfoli tab. "
-                "Open it there, sign in, then ask me again and I'll read your assignments.")
+    dash = run_on_browser("browser_open", {"url": _CANVAS_URL}, timeout=50)
+    _, _, dbody = _snap_text(dash)
+    if not dbody or "can't find your login" in dbody.lower() or "log in" == dbody.strip().lower():
+        return ("Canvas didn't load properly, Sir — log into it once in the Borfoli tab, then ask again.")
+    crawl = canvas_crawl()          # walks each course's assignments page via real links
+    material = (f"DASHBOARD (To-Do / Coming Up):\n{dbody[:2500]}\n\n{crawl}").strip()
     prompt = (JARVIS_PROMPT + "\n\n" + (facts or "") + f"\n\nMani asked: \"{msg}\"\n\n"
-              f"Here is the text of his FISD Canvas dashboard:\n{body[:4500]}\n\n"
-              "From this, list his UPCOMING assignments and tests with their due dates (look at the To-Do, "
-              "'Coming Up', recent-activity, and course items). Format as a short dated list, soonest first. "
-              "If the dashboard shows nothing upcoming, say so plainly and suggest checking the Calendar. "
-              "Do NOT invent any assignment, test, or date that isn't in the text above.")
-    return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=650)
+              f"Here is his Canvas — the dashboard plus each course's assignments page:\n{material[:6500]}\n\n"
+              "List his UPCOMING assignments and tests with due dates, soonest first, grouped sensibly, and say "
+              "what to knock out today. If a course showed nothing, skip it. Do NOT invent anything not shown above.")
+    return groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=750)
+
+def canvas_crawl(max_courses=8):
+    """FREE, deterministic Canvas crawl: open /courses, follow each course's real link to
+    its Assignments page, aggregate the text. No API token, no smart-model navigation."""
+    try:
+        run_on_browser("browser_open", {"url": _CANVAS_URL + "/courses"}, timeout=45)
+        raw = run_on_browser("browser_links", {}, timeout=25)
+        links = json.loads(raw) if raw and raw.strip().startswith("[") else []
+    except Exception:
+        links = []
+    ids = []
+    for l in links:
+        m = re.search(r"/courses/(\d+)(?:/|$)", l.get("href", ""))
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    agg = []
+    for cid in ids[:max_courses]:
+        try:
+            run_on_browser("browser_open", {"url": f"{_CANVAS_URL}/courses/{cid}/assignments"}, timeout=40)
+            snap = run_on_browser("browser_read", {}, timeout=25)
+            text = snap.split("\n\n", 1)[-1] if snap else ""
+            if text.strip() and "not authorized" not in text.lower():
+                agg.append(f"=== Course {cid} ===\n{text[:1600]}")
+        except Exception:
+            continue
+    return "\n\n".join(agg)
 
 CREW_ROLES = {
     "Researcher": "You are a world-class researcher. Find facts, gather context, produce thorough research summaries.",
