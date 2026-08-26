@@ -2894,6 +2894,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
     <div class="card col-4">
       <div class="lbl">◉ MEMORY MATRIX <span class="r" id="mem-r"></span></div>
       <div class="addrow"><input id="mem-in" placeholder="Remember this, Sir…"><button id="mem-add">+</button></div>
+      <button id="adapt-btn" style="width:100%;margin:8px 0 6px;padding:7px;background:transparent;border:1px solid rgba(201,168,76,.35);color:#c9a84c;font:700 9px var(--mono,monospace);letter-spacing:.2em;cursor:pointer">⟳ STUDY ME · ADAPT</button>
       <div id="mem-list"></div>
     </div>
 
@@ -3283,6 +3284,10 @@ async function loadMem(){try{const d=await API('/memory');const r=d.records||[];
 $('mem-add').onclick=async()=>{const v=$('mem-in').value.trim();if(!v)return;$('mem-in').value='';
   await fetch('/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:v})});loadMem();};
 $('mem-in').addEventListener('keydown',e=>{if(e.key==='Enter')$('mem-add').click();});
+$('adapt-btn').onclick=async()=>{const b=$('adapt-btn');b.textContent='⟳ STUDYING…';b.disabled=true;
+  try{const d=await API('/study');addMsg('b','I’ve studied your notes and our history, Sir, and refreshed my read on you. I’ll adapt from here.');if(d.profile)speak('Understanding of you refreshed, Sir.');}
+  catch(_){addMsg('b','Couldn’t run the study just now, Sir.');}
+  b.textContent='⟳ STUDY ME · ADAPT';b.disabled=false;};
 loadMem();
 
 /* ── system bridge ── */
