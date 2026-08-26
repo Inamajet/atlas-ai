@@ -369,6 +369,14 @@ def save_profile(text):
                       headers={**HEADERS, "Prefer": "resolution=merge-duplicates"},
                       json={"id": 2, "facts": (text or "")[:12000], "history": "[]"})
     except Exception: pass
+    # Mirror the whole learned profile into Obsidian (a live, editable view of everything
+    # Borfoli has learned) — fire-and-forget so it never delays a reply.
+    try:
+        if text and pc_agent_online():
+            threading.Thread(target=lambda: run_on_pc("write_note", {
+                "title": "Borfoli — Learned Profile", "folder": "Borfoli Brain",
+                "overwrite": True, "body": text}, timeout=30), daemon=True).start()
+    except Exception: pass
 
 _ADAPT_SIGNALS = ("i prefer", "i'd prefer", "i like it when", "i don't like", "i dont like",
                   "i hate when", "i hate it when", "don't ", "dont ", "stop ", "always ",
