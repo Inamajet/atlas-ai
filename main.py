@@ -2091,11 +2091,13 @@ def _is_web_target(t):
 # Mani's personal site shortcuts — resolve a spoken name to the exact URL so browsing
 # lands on the right page instead of guessing. (Correct the Canvas domain if it differs.)
 PERSONAL_SITES = {
-    "canvas": "https://friscoisd.instructure.com",
-    "my canvas": "https://friscoisd.instructure.com",
-    "fisd": "https://friscoisd.instructure.com",
-    "fisd canvas": "https://friscoisd.instructure.com",
-    "school canvas": "https://friscoisd.instructure.com",
+    "canvas": "https://fisd.instructure.com",
+    "my canvas": "https://fisd.instructure.com",
+    "fisd": "https://fisd.instructure.com",
+    "fisd canvas": "https://fisd.instructure.com",
+    "school canvas": "https://fisd.instructure.com",
+    "my courses": "https://fisd.instructure.com/courses",
+    "my assignments": "https://fisd.instructure.com",
 }
 def _resolve_site(u):
     return PERSONAL_SITES.get((u or "").strip().lower().lstrip("open ").strip(), u)
