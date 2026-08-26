@@ -2570,7 +2570,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .lbl{font-family:var(--mono);font-size:8.5px;letter-spacing:.26em;color:var(--cydim);text-transform:uppercase;display:flex;align-items:center;gap:7px;margin-bottom:11px}
 .lbl .r{margin-left:auto;color:var(--txf);letter-spacing:.14em}
 .col-core{grid-column:span 3}.col-comms{grid-column:span 6}.col-side{grid-column:span 3}
-.col-4{grid-column:span 4}.col-6{grid-column:span 6}.col-8{grid-column:span 8}
+.col-4{grid-column:span 4}.col-6{grid-column:span 6}.col-8{grid-column:span 8}.col-12{grid-column:span 12}
 
 /* core / arc reactor */
 .core{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:290px}
@@ -2764,6 +2764,12 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
         <div class="sub" id="wx-s"></div>
         <div class="src">SRC · NATIONAL WEATHER SERVICE</div>
       </div>
+    </div>
+
+    <!-- KNOWLEDGE GALAXY -->
+    <div class="card col-12">
+      <div class="lbl">🌌 KNOWLEDGE GALAXY <span class="r"><a href="/galaxy" target="_blank" style="color:#c9a84c;text-decoration:none">FULLSCREEN ↗</a></span></div>
+      <iframe src="/galaxy" title="Knowledge Galaxy" style="width:100%;height:300px;border:0;border-radius:2px;background:#000004;display:block"></iframe>
     </div>
 
     <!-- TIMETABLE -->
