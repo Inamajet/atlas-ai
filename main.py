@@ -1844,6 +1844,69 @@ def digest():
     return jsonify({"digest": "\n\n".join(p for p in parts if p) or "Nothing pressing, Sir.",
                     "email_linked": GMAIL_APP_PW != "", "discord_linked": bool(DISCORD_BOT_TOKEN and DISCORD_CHANNELS)})
 
+@app.route("/galaxy-data")
+def galaxy_data():
+    """Nodes + links from the synced Obsidian vault, for the 3D knowledge galaxy."""
+    from collections import defaultdict
+    chunks = VAULT_INDEX["chunks"]
+    nodes, links = [], []
+    for i, c in enumerate(chunks):
+        folder = (c.get("path", "").replace("\\", "/").rsplit("/", 1)[0] or "notes")
+        nodes.append({"id": i, "label": c.get("title", "note")[:40],
+                      "group": (folder.split("/")[-1] or "notes"),
+                      "excerpt": (c.get("text", "") or "")[:700]})
+    texts = [(c.get("text", "") or "").lower() for c in chunks]
+    tset = [((c.get("title", "") or "").lower().strip(), i) for i, c in enumerate(chunks)]
+    seen = set()
+    for ti, i in tset:
+        if len(ti) < 3: continue
+        for j, tx in enumerate(texts):
+            if i == j: continue
+            if ti in tx and (i, j) not in seen and (j, i) not in seen:
+                links.append({"source": i, "target": j}); seen.add((i, j))
+    bypath = defaultdict(list)
+    for i, c in enumerate(chunks): bypath[c.get("path", "")].append(i)
+    for _, idxs in bypath.items():
+        for a in range(len(idxs) - 1):
+            links.append({"source": idxs[a], "target": idxs[a + 1]})
+    return jsonify({"nodes": nodes, "links": links, "count": len(nodes)})
+
+GALAXY_HTML = r"""<!doctype html><html><head><meta charset=utf-8><title>Borfoli · Knowledge Galaxy</title>
+<style>html,body{margin:0;height:100%;background:#000004;overflow:hidden;font-family:'JetBrains Mono',monospace}
+#g{width:100vw;height:100vh}
+#hint{position:fixed;top:14px;left:16px;color:#c9a84c;font-size:11px;letter-spacing:.22em;opacity:.8;z-index:5}
+#empty{position:fixed;inset:0;display:none;align-items:center;justify-content:center;color:#c9a84c;text-align:center;font-size:13px;letter-spacing:.1em;z-index:6}
+#panel{position:fixed;right:0;top:0;height:100%;width:340px;max-width:82vw;background:rgba(2,4,10,.94);border-left:1px solid rgba(201,168,76,.3);
+  transform:translateX(100%);transition:transform .35s;z-index:7;padding:26px 22px;box-sizing:border-box;overflow:auto}
+#panel.on{transform:none}#panel h2{color:#c9a84c;font-size:14px;letter-spacing:.15em;margin:0 0 4px}
+#panel .grp{color:#5ab0ff;font-size:9px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:16px}
+#panel p{color:#cfd2d6;font-size:12px;line-height:1.7;white-space:pre-wrap}#panel .x{position:absolute;top:14px;right:18px;color:#888;cursor:pointer}</style></head>
+<body><div id=g></div><div id=hint>◈ BORFOLI · KNOWLEDGE GALAXY — click a star to dive</div>
+<div id=empty>YOUR VAULT IS NEARLY EMPTY.<br><br>Sync your Obsidian vault (keep the agent running) and the galaxy fills with your notes.</div>
+<div id=panel><span class=x onclick="document.getElementById('panel').classList.remove('on')">✕</span><h2 id=pt></h2><div class=grp id=pg></div><p id=px></p></div>
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph"></script>
+<script>
+fetch('/galaxy-data').then(r=>r.json()).then(data=>{
+  if(!data.count){document.getElementById('empty').style.display='flex';return;}
+  const C=['#c9a84c','#5ab0ff','#4ac97a','#ff6b6b','#b98cff','#ffb454','#4ec7c9','#ff8fab'];
+  const groups=[...new Set(data.nodes.map(n=>n.group))];const col=g=>C[groups.indexOf(g)%C.length];
+  const G=ForceGraph3D()(document.getElementById('g')).graphData(data).backgroundColor('#000004')
+    .nodeLabel(n=>n.label).nodeColor(n=>col(n.group)).nodeVal(n=>2).nodeOpacity(.92).nodeResolution(12)
+    .linkColor(()=>'rgba(201,168,76,0.22)').linkWidth(.4).linkDirectionalParticles(0).showNavInfo(false)
+    .onNodeClick(n=>{const d=140,r=1+d/Math.hypot(n.x||1,n.y||1,n.z||1);
+      G.cameraPosition({x:(n.x||0)*r,y:(n.y||0)*r,z:(n.z||0)*r},n,1400);
+      document.getElementById('pt').textContent=n.label;document.getElementById('pg').textContent=n.group;
+      document.getElementById('px').textContent=n.excerpt||'(no excerpt)';document.getElementById('panel').classList.add('on');});
+  try{G.controls().autoRotate=true;G.controls().autoRotateSpeed=.35;}catch(_){}
+  // starfield backdrop
+  try{const T=G.scene().type?G:null;}catch(_){}
+}).catch(()=>{document.getElementById('empty').style.display='flex';});
+</script></body></html>"""
+
+@app.route("/galaxy")
+def galaxy():
+    return Response(GALAXY_HTML, mimetype="text/html")
+
 @app.route("/brief")
 def brief():
     """A chief-of-staff briefing: time, weather, where he should be per his schedule,
@@ -2630,6 +2693,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
     <div class="hdr-r">
       <span>OPERATOR · <b>SIR</b></span>
       <span id="mode-ind"><b>WORK MODE</b></span>
+      <a href="/galaxy" target="_blank" style="color:#c9a84c;text-decoration:none;letter-spacing:.15em;cursor:pointer">🌌 GALAXY</a>
       <span id="bridge-ind" class="off">◇ BRIDGE OFFLINE</span>
     </div>
   </div>
