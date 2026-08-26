@@ -1092,7 +1092,7 @@ _TOOL_FNS = {
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
     "search_notes":  lambda a: _tool_search_notes(a.get("query", ""), a.get("k", 5)),
-    "browse_open":   lambda a: run_on_browser("browser_open", {"url": a.get("url", "")}, timeout=45),
+    "browse_open":   lambda a: run_on_browser("browser_open", {"url": _resolve_site(a.get("url", ""))}, timeout=45),
     "browse_look":   lambda a: run_on_browser("browser_look", {}, timeout=25),
     "browse_click":  lambda a: run_on_browser("browser_click", {"ref": a.get("ref")}, timeout=30),
     "browse_type":   lambda a: run_on_browser("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
@@ -1844,6 +1844,25 @@ def digest():
     return jsonify({"digest": "\n\n".join(p for p in parts if p) or "Nothing pressing, Sir.",
                     "email_linked": GMAIL_APP_PW != "", "discord_linked": bool(DISCORD_BOT_TOKEN and DISCORD_CHANNELS)})
 
+@app.route("/brief")
+def brief():
+    """A chief-of-staff briefing: time, weather, where he should be per his schedule,
+    anything in unread email that needs him, and one item requiring attention."""
+    ctx = get_live_context()
+    email_line = ""
+    em = fetch_recent_emails(limit=10, unread_only=True)
+    if isinstance(em, list) and em:
+        email_line = "UNREAD EMAIL:\n" + "\n".join(f"- {e['from']}: {e['subject']}" for e in em[:6])
+    elif isinstance(em, dict) and em.get("error"):
+        email_line = "(inbox unreachable)"
+    prompt = (JARVIS_PROMPT + "\n\n" + ctx + "\n\n" + email_line +
+              "\n\nBRIEFING MODE. Give Mani a tight spoken briefing: the time and weather in one line; "
+              "where he should be RIGHT NOW per his locked schedule and what's next; anything in the unread "
+              "email that genuinely needs a reply; then exactly one 'Item requiring your attention, Sir.' "
+              "Under 110 words, spoken aloud so NO markdown, NO lists — flowing sentences. Do not invent emails.")
+    reply = groq_chat(FAST_MODEL, [{"role": "user", "content": prompt}], max_tokens=320)
+    return jsonify({"brief": reply, "context": ctx})
+
 @app.route("/diag")
 def diag():
     """Live per-provider health — actually calls each provider (bypassing cooldown)
@@ -2006,11 +2025,24 @@ def _is_web_target(t):
     if "." in tl and " " not in tl and not tl.endswith((".exe", ".txt", ".pdf", ".png", ".jpg", ".docx")): return True
     return False
 
+# Mani's personal site shortcuts — resolve a spoken name to the exact URL so browsing
+# lands on the right page instead of guessing. (Correct the Canvas domain if it differs.)
+PERSONAL_SITES = {
+    "canvas": "https://friscoisd.instructure.com",
+    "my canvas": "https://friscoisd.instructure.com",
+    "fisd": "https://friscoisd.instructure.com",
+    "fisd canvas": "https://friscoisd.instructure.com",
+    "school canvas": "https://friscoisd.instructure.com",
+}
+def _resolve_site(u):
+    return PERSONAL_SITES.get((u or "").strip().lower().lstrip("open ").strip(), u)
+
 def _open_smart(target):
     """Websites → the real browser via the EXTENSION (dedicated tab, no new window).
     Local apps/files → the PC agent. Falls back to PC open if the extension is offline."""
-    if _is_web_target(target) and ext_online():
-        return run_on_browser("browser_open", {"url": target})
+    resolved = _resolve_site(target)
+    if (resolved != target or _is_web_target(resolved)) and ext_online():
+        return run_on_browser("browser_open", {"url": resolved})
     return run_on_pc("open", {"target": target})
 
 def try_pc_action(msg):
@@ -2763,8 +2795,14 @@ $('modes').innerHTML=MODES.map(m=>`<button class="mode ${m==='Work'?'on':''}" da
 $('modes').querySelectorAll('.mode').forEach(b=>b.onclick=()=>{
   curMode=b.dataset.m;$('modes').querySelectorAll('.mode').forEach(x=>x.classList.toggle('on',x===b));
   $('mode-ind').innerHTML='<b>'+curMode.toUpperCase()+' MODE</b>';
-  if(curMode==='Briefing'){$('inp').value='brief me';send();}
+  if(curMode==='Briefing'){briefMe();}
 });
+async function briefMe(){
+  addMsg('u','Brief me, Sir.');$('core').classList.add('think');
+  try{const d=await API('/brief');const b=d.brief||'—';addMsg('b',b);speak(b);}
+  catch(_){addMsg('b','Couldn’t pull your briefing just now, Sir.');}
+  $('core').classList.remove('think');
+}
 
 /* ── comms ── */
 const feed=$('feed');
@@ -3016,13 +3054,39 @@ async function convTurn(){
   convProcessing=false;
   if(convOn)convListen();                                // your turn again
 }
+/* Barge-in: while Borfoli is speaking, monitor mic energy (echo-cancelled, so his own
+   voice barely registers). If YOU start talking, cut him off and listen. */
+const VAD={ctx:null,an:null,stream:null,raf:null,loud:0,on:false};
+async function vadStart(){
+  if(VAD.on)return;
+  try{
+    VAD.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    VAD.ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const src=VAD.ctx.createMediaStreamSource(VAD.stream);
+    VAD.an=VAD.ctx.createAnalyser();VAD.an.fftSize=512;src.connect(VAD.an);
+    const buf=new Uint8Array(VAD.an.fftSize);VAD.on=true;
+    const tick=()=>{ if(!VAD.on)return;
+      VAD.an.getByteTimeDomainData(buf);let s=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}
+      const rms=Math.sqrt(s/buf.length);
+      if(window.__speaking&&convOn&&rms>0.085){ if(++VAD.loud>7){bargeIn();VAD.loud=0;} } else VAD.loud=0;
+      VAD.raf=requestAnimationFrame(tick);
+    };
+    tick();
+  }catch(_){}
+}
+function vadStop(){VAD.on=false;if(VAD.raf)cancelAnimationFrame(VAD.raf);try{if(VAD.stream)VAD.stream.getTracks().forEach(t=>t.stop());if(VAD.ctx)VAD.ctx.close();}catch(_){}VAD.ctx=VAD.stream=VAD.an=null;}
+function bargeIn(){
+  try{speechSynthesis.cancel();}catch(_){}
+  try{if(audio)audio.pause();}catch(_){}
+  window.__speaking=false;                               // convWaitSpeak resolves → your turn immediately
+}
 function convToggle(){
   convOn=!convOn;$('conv').classList.toggle('on',convOn);
   if(convOn){ if(!SR){addMsg('b','Voice input isn’t supported in this browser, Sir.');convOn=false;$('conv').classList.remove('on');return;}
     if(!ttsOn){ttsOn=true;$('ttsb').classList.add('on');}
     if(wakeOn)toggleWake();                              // don't run wake + conversation at once
-    convListen();addMsg('b','Conversation mode on, Sir. Just talk — take your time, I’ll wait until you’re done, then reply out loud. Tap 💬 again to stop.');
-  }else{clearTimeout(convSil);try{convRec&&convRec.abort();}catch(_){}convRec=null;convProcessing=false;$('inp').placeholder='Speak or type your instruction, Sir…';}
+    vadStart();convListen();addMsg('b','Conversation mode on, Sir. Just talk — take your time, I’ll wait until you’re done, then reply out loud. You can cut me off mid-sentence any time. Tap 💬 again to stop.');
+  }else{clearTimeout(convSil);vadStop();try{convRec&&convRec.abort();}catch(_){}convRec=null;convProcessing=false;$('inp').placeholder='Speak or type your instruction, Sir…';}
 }
 $('conv').onclick=convToggle;
 
