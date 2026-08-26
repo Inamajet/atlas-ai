@@ -2149,6 +2149,20 @@ _PC_OPEN_RE = re.compile(
     r"(?:open|launch|start|run|pull\s+up|bring\s+up|go\s+to)\s+(?:the\s+|my\s+|up\s+)?(.+?)\s*[?.!]*\s*$", re.I)
 _PC_TYPE_RE = re.compile(r"^\s*type\s+(?:out\s+)?(.+?)\s*$", re.I)
 _REMEMBER_RE = re.compile(r"^\s*(?:hey\s+)?(?:remember|note|jot\s+down|take\s+a\s+note|make\s+a\s+note|save\s+a\s+note|new\s+note)\b(?:\s+that|\s+down|\s+this)?[:,]?\s*(.+)$", re.I)
+_CLIP_RE = re.compile(r"\b(clip this|save this (?:article|video|page|thread|link|post)|save (?:this |the )?link|add this to (?:my )?(?:notes|obsidian)|save this to (?:my )?(?:notes|obsidian)|learn (?:from )?this (?:article|video|page|link|thread|post)|clip (?:this )?(?:link|page|article|video))\b", re.I)
+
+def _snap_text(snap):
+    """Pull the clean readable text out of an extension page snapshot."""
+    s = snap or ""
+    title, src = "", ""
+    for ln in s.splitlines():
+        if ln.startswith("TITLE:") and not title: title = ln[6:].strip()
+        elif ln.startswith("PAGE:") and not src: src = ln[5:].strip()
+    body = s
+    if "TEXT:\n" in s:
+        body = s.split("TEXT:\n", 1)[1]
+    body = body.split("\nCLICKABLE", 1)[0].strip()
+    return (title[:70] or "Clipped page"), src, body
 
 _WEB_NAMES = {"youtube", "yt", "gmail", "mail", "reddit", "discord", "twitter", "x",
               "spotify", "maps", "amazon", "github", "google", "netflix", "chatgpt",
@@ -2263,6 +2277,28 @@ def chat():
         history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": note})
         save_memory(base_facts, history)
         return jsonify({"reply": note, "intent": "remember"})
+
+    # ── "Clip this <link>" → Borfoli reads the page via your browser and saves the real
+    # content into your Obsidian vault so it genuinely learns from it. ──
+    if _CLIP_RE.search(msg):
+        urls = URL_RE.findall(msg)
+        if urls or ext_online():
+            snap = (run_on_browser("browser_open", {"url": _resolve_site(urls[0])}, timeout=45)
+                    if urls else run_on_browser("browser_look", {}, timeout=25))
+            title, src, body = _snap_text(snap)
+            if not body or len(body) < 40:
+                reply = "I couldn't read that page's content, Sir — it may need a login or block reading. Open it in your Borfoli tab and try again."
+            elif pc_agent_online():
+                note = f"Source: {src or (urls[0] if urls else 'current tab')}\n\n{body[:6000]}"
+                run_on_pc("write_note", {"title": title, "body": note}, timeout=30)
+                reply = f"Clipped “{title}” into your Obsidian vault, Sir — its content is in my brain now."
+            else:
+                reply = "I read the page, Sir, but your desktop agent is offline so I can't save it to Obsidian. Start it and I'll clip it."
+        else:
+            reply = "Give me a link to clip, Sir, or open the page in your Borfoli tab first."
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "clip"})
 
     # ── "Study me" → distil a refreshed profile from vault + history (adaptation) ──
     if any(p in msg_lo for p in ("study me", "learn about me", "adapt to me", "get to know me",
