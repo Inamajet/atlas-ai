@@ -2077,6 +2077,7 @@ _PC_OPEN_RE = re.compile(
     r"^\s*(?:hey\s+|ok\s+|now\s+|please\s+|can\s+you\s+|could\s+you\s+|go\s+)*"
     r"(?:open|launch|start|run|pull\s+up|bring\s+up|go\s+to)\s+(?:the\s+|my\s+|up\s+)?(.+?)\s*[?.!]*\s*$", re.I)
 _PC_TYPE_RE = re.compile(r"^\s*type\s+(?:out\s+)?(.+?)\s*$", re.I)
+_REMEMBER_RE = re.compile(r"^\s*(?:hey\s+)?(?:remember|note|jot\s+down|take\s+a\s+note|make\s+a\s+note|save\s+a\s+note|new\s+note)\b(?:\s+that|\s+down|\s+this)?[:,]?\s*(.+)$", re.I)
 
 _WEB_NAMES = {"youtube", "yt", "gmail", "mail", "reddit", "discord", "twitter", "x",
               "spotify", "maps", "amazon", "github", "google", "netflix", "chatgpt",
@@ -2172,6 +2173,22 @@ def chat():
         return jsonify({"reply": pc_result_str, "intent": "pc_action"})
 
     msg_lo = msg.lower()
+
+    # ── "Remember that…" → write a real note into the Obsidian vault (with plugins,
+    # galaxy, brain). Falls back to cloud memory if the desktop agent is offline.
+    _rem = _REMEMBER_RE.match(msg)
+    if _rem and len(_rem.group(1).strip()) >= 3:
+        content = _rem.group(1).strip()
+        title = " ".join(content.split()[:7])
+        if pc_agent_online():
+            res = run_on_pc("write_note", {"title": title, "body": content}, timeout=30)
+            note = f"Noted, Sir. {res}"
+        else:
+            base_facts = (base_facts + f"\n[{datetime.now().strftime('%Y-%m-%d')}] {content[:200]}").strip()
+            note = "Noted to memory, Sir. (Start the desktop agent and I'll write it into your Obsidian vault too.)"
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": note})
+        save_memory(base_facts, history)
+        return jsonify({"reply": note, "intent": "remember"})
 
     # ── Gmail READ + Discord WATCH — go straight to the reader, not the tool loop.
     # (Runs BEFORE the Mani-OS route: "check my email" must not be caught by "check".)
