@@ -2379,6 +2379,8 @@ _PC_OPEN_RE = re.compile(
 _PC_TYPE_RE = re.compile(r"^\s*type\s+(?:out\s+)?(.+?)\s*$", re.I)
 _REMEMBER_RE = re.compile(r"^\s*(?:hey\s+)?(?:remember|note|jot\s+down|take\s+a\s+note|make\s+a\s+note|save\s+a\s+note|new\s+note)\b(?:\s+that|\s+down|\s+this)?[:,]?\s*(.+)$", re.I)
 _CLIP_RE = re.compile(r"\b(clip this|save this (?:article|video|page|thread|link|post)|save (?:this |the )?link|add this to (?:my )?(?:notes|obsidian)|save this to (?:my )?(?:notes|obsidian)|learn (?:from )?this (?:article|video|page|link|thread|post)|clip (?:this )?(?:link|page|article|video))\b", re.I)
+_SELFEDIT_RE = re.compile(r"\b(edit your(?:self| own code| code)|improve yourself|rewrite your(?:self| code)|modify your (?:own )?code|change your (?:own )?code|update your (?:own )?code|add .{2,60} to your (?:own )?code|fix your (?:own )?(?:code|bug)|patch yourself|refactor your(?:self| code)|give yourself (?:the ability|a new)|build (?:in )?yourself)\b", re.I)
+_SELFREVERT_RE = re.compile(r"\b(revert your last|undo your (?:last )?(?:change|edit)|roll ?back your (?:last )?(?:change|edit)|revert yourself|undo that (?:code )?change)\b", re.I)
 
 def _snap_text(snap):
     """Pull the clean readable text out of an extension page snapshot."""
@@ -2529,6 +2531,24 @@ def chat():
         return jsonify({"reply": pc_result_str, "intent": "pc_action"})
 
     msg_lo = msg.lower()
+
+    # ── Self-editing: Borfoli rewrites its own code (compile-gated + your approval) ──
+    if _SELFREVERT_RE.search(msg):
+        reply = (run_on_pc("self_revert", {}, timeout=120) if pc_agent_online()
+                 else "I need the desktop agent running to touch my code, Sir.")
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "self_revert"})
+    if _SELFEDIT_RE.search(msg):
+        if not pc_agent_online():
+            reply = "I need the desktop agent running to edit my own code, Sir — start the engine, then ask again."
+        else:
+            reply = ("Editing my own code now, Sir — **approve it in the engine window** (type y). "
+                     "I'll compile-check it and auto-revert if it breaks. Give me a minute…\n\n"
+                     + str(run_on_pc("self_edit", {"request": msg}, timeout=470)))
+        history.append({"role": "user", "content": msg}); history.append({"role": "assistant", "content": reply})
+        save_memory(base_facts, history)
+        return jsonify({"reply": reply, "intent": "self_edit"})
 
     # ── "Remember that…" → write a real note into the Obsidian vault (with plugins,
     # galaxy, brain). Falls back to cloud memory if the desktop agent is offline.
