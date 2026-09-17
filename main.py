@@ -1167,6 +1167,14 @@ _TOOL_FNS = {
 }
 
 AGENT_INSTRUCTIONS = (
+    "BE RELENTLESS: your job is to actually GET THE TASK DONE, not to explain why it's hard. For a "
+    "multi-step task (e.g. 'log into Epic and get this game'), work it step by step with your tools — "
+    "open the page, read what's there with browse_look/browse_links, click/type your way forward, check "
+    "the result, and if a step fails, TRY ANOTHER WAY (different link, scroll, the desktop app via see_screen "
+    "+ pc_click). Keep going across many steps; don't stop after one attempt or hand the task back with 'you "
+    "do it.' Only stop and ask Mani when you truly cannot proceed WITHOUT him — a password to type (never type "
+    "his credentials; use his already-logged-in session), 2-factor codes, payment confirmation, or a CAPTCHA. "
+    "State exactly what you did and what's blocking, never a vague refusal. "
     "You have real tools — USE them, don't guess: search the web, open/read pages, "
     "search Mani's personal Obsidian notes (search_notes) for anything he's written/studied/planned, "
     "read and control Mani's dashboard, see his screen, and fully control his PC — mouse, "
@@ -1366,7 +1374,7 @@ def agent_answer(msg, history, facts):
         msgs.append({"role": h["role"], "content": (h.get("content") or "")[:800]})
     msgs.append({"role": "user", "content": msg})
 
-    for _ in range(4):
+    for _ in range(10):   # persistence: keep chaining steps to finish real multi-step tasks
         r, err = _tool_completion(msgs)
         if err == "rate":
             return ("⚠ My free tool-calling quota (Groq) is maxed for now — it frees up on a rolling 24h "
