@@ -2986,8 +2986,11 @@ HTML = r"""<!DOCTYPE html>
   --line:rgba(120,175,255,0.13); --line2:rgba(120,175,255,0.25);
   --cy:#5cc8ff; --cy2:#8fdcff; --cydim:rgba(92,200,255,0.55);
   --amber:#ffb44d; --green:#57e39b; --red:#ff5c7a;
+  --gold:#c9a84c; --golddim:rgba(201,168,76,0.55);
   --tx:#cfe0f5; --txd:rgba(207,224,245,0.45); --txf:rgba(207,224,245,0.25);
   --mono:'JetBrains Mono',monospace; --disp:'Chakra Petch',sans-serif;
+  --sys:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;
+  --ease:cubic-bezier(0.25,0.1,0.25,1);
 }
 html,body{height:100%}
 body{background:
@@ -3015,40 +3018,56 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .hdr-r .live{color:var(--green)}.hdr-r .off{color:var(--txf)}
 
 /* grid */
-.grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
-.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:4px;padding:14px 15px;position:relative;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-.card::before{content:'';position:absolute;top:-1px;left:14px;width:26px;height:2px;background:var(--cy);opacity:.6}
+.grid{display:grid;gap:18px;grid-template-columns:repeat(12,1fr)}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:18px;padding:18px 20px;position:relative;backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 10px 34px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.02);transition:border-color .3s var(--ease),box-shadow .3s var(--ease)}
+.card::before{content:'';position:absolute;top:-1px;left:20px;width:26px;height:2px;border-radius:2px;background:var(--cy);opacity:.55}
 .lbl{font-family:var(--mono);font-size:8.5px;letter-spacing:.26em;color:var(--cydim);text-transform:uppercase;display:flex;align-items:center;gap:7px;margin-bottom:11px}
 .lbl .r{margin-left:auto;color:var(--txf);letter-spacing:.14em}
 .col-core{grid-column:span 3}.col-comms{grid-column:span 6}.col-side{grid-column:span 3}
 .col-4{grid-column:span 4}.col-6{grid-column:span 6}.col-8{grid-column:span 8}.col-12{grid-column:span 12}
 
-/* core / arc reactor */
-.core{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:290px}
-.reactor{width:180px;height:180px;position:relative}
+/* core / hologram figure — a projected human whose brain is a live Obsidian-style
+   neuron graph. The projector-base rings reuse .rk (kept for the existing spin timing
+   + .think speed-up), so no JS changes were needed to wire this up. */
+.core{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:310px}
+.reactor{width:168px;height:202px;position:relative}
 .reactor svg{width:100%;height:100%;overflow:visible}
-.rk{transform-origin:center;animation:spin 14s linear infinite}
+.rk{transform-origin:100px 223px;animation:spin 14s linear infinite}
 .rk.rev{animation:spin 22s linear infinite reverse}
-.rk.fast{animation:spin 8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.core-pct{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.core-pct b{font-size:26px;font-weight:700;color:#eaf4ff;text-shadow:0 0 18px rgba(92,200,255,0.6);letter-spacing:.03em}
-.core-pct span{font-family:var(--mono);font-size:7px;letter-spacing:.2em;color:var(--txf);margin-top:2px}
-.core-meta{margin-top:14px}
+.holo-figure{animation:holoFlicker 6.5s ease-in-out infinite}
+@keyframes holoFlicker{0%,100%{opacity:1}91%{opacity:1}92%{opacity:.82}93%{opacity:1}96%{opacity:1}96.6%{opacity:.88}97%{opacity:1}}
+.holo-scan{position:absolute;left:20%;right:20%;top:-4px;height:20px;pointer-events:none;z-index:2;
+  background:linear-gradient(180deg,transparent,rgba(92,200,255,.4),transparent);mix-blend-mode:screen;
+  animation:holoSweep 3.6s ease-in-out infinite}
+@keyframes holoSweep{0%{transform:translateY(0);opacity:0}8%{opacity:.9}90%{opacity:.9}100%{transform:translateY(230px);opacity:0}}
+.neuron{fill:var(--gold);filter:drop-shadow(0 0 3px rgba(201,168,76,.9));transform-box:fill-box;transform-origin:center;
+  animation:neuronPulse 2.6s ease-in-out infinite}
+@keyframes neuronPulse{0%,100%{opacity:.55;transform:scale(.85)}50%{opacity:1;transform:scale(1.18)}}
+.synapse{stroke:var(--gold);stroke-width:.7;opacity:.2;animation:synapsePulse 2.6s ease-in-out infinite}
+@keyframes synapsePulse{0%,100%{opacity:.14}50%{opacity:.6}}
+.core.think .holo-scan{animation-duration:1s}
+.core.think .rk{animation-duration:5s}
+.core.think .neuron{fill:var(--amber);filter:drop-shadow(0 0 4px rgba(255,180,77,.9));animation-duration:.8s}
+.core.think .synapse{stroke:var(--amber);animation-duration:.8s}
+.core-pct{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:2px}
+.core-pct b{font-size:19px;font-weight:700;color:#eaf4ff;text-shadow:0 0 18px rgba(92,200,255,0.6);letter-spacing:.03em}
+.core-pct span{font-family:var(--mono);font-size:6.5px;letter-spacing:.2em;color:var(--txf);margin-top:2px}
+.core-meta{margin-top:12px}
 .core-meta .t{font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--txf)}
 .core-meta .p{font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--cy);margin-top:3px}
 .core-meta .s{font-family:var(--mono);font-size:8px;color:var(--txf);letter-spacing:.14em;margin-top:5px}
 .core.think .core-pct b{color:var(--amber);text-shadow:0 0 20px rgba(255,180,77,0.6)}
-.core.think .rk{animation-duration:5s}
 
 /* comms */
 .comms{display:flex;flex-direction:column;min-height:290px}
 .modes{display:flex;gap:5px;margin-bottom:11px;flex-wrap:wrap}
-.mode{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;padding:5px 10px;border:1px solid var(--line);border-radius:3px;color:var(--txd);cursor:pointer;background:transparent;transition:.15s;text-transform:uppercase}
-.mode:hover{border-color:var(--line2);color:var(--tx)}
+.mode{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;padding:6px 13px;border:1px solid var(--line);border-radius:980px;color:var(--txd);cursor:pointer;background:transparent;transition:.2s var(--ease);text-transform:uppercase}
+.mode:hover{border-color:var(--line2);color:var(--tx);transform:translateY(-1px)}
 .mode.on{border-color:var(--cy);color:var(--cy);background:rgba(92,200,255,0.09)}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:4px;max-height:340px;min-height:150px}
-.msg{font-size:12.5px;line-height:1.6}
+.msg{font-family:var(--sys);font-size:13px;line-height:1.6;animation:fadeUp .35s var(--ease) both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .msg .who{font-family:var(--mono);font-size:7.5px;letter-spacing:.2em;color:var(--cydim);margin-bottom:3px;text-transform:uppercase}
 .msg.u{align-self:flex-end;max-width:78%;text-align:right}
 .msg.u .who{color:var(--txf)}
@@ -3063,8 +3082,8 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .iw:focus-within{border-color:rgba(92,200,255,0.4);box-shadow:0 0 24px rgba(92,200,255,0.08)}
 #inp{flex:1;background:none;border:none;outline:none;color:#eaf4ff;font-family:var(--disp);font-size:13px;letter-spacing:.02em}
 #inp::placeholder{color:var(--txf)}
-.ib{width:30px;height:30px;border:1px solid var(--line);background:transparent;border-radius:7px;color:var(--txd);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:.15s;flex-shrink:0}
-.ib:hover{border-color:var(--line2);color:var(--cy)}.ib.on{border-color:var(--cy);color:var(--cy);background:rgba(92,200,255,0.1)}
+.ib{width:32px;height:32px;border:1px solid var(--line);background:transparent;border-radius:10px;color:var(--txd);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:.2s var(--ease);flex-shrink:0}
+.ib:hover{border-color:var(--line2);color:var(--cy);transform:scale(1.06)}.ib.on{border-color:var(--cy);color:var(--cy);background:rgba(92,200,255,0.1)}
 .ib.mic.rec{border-color:var(--red);color:var(--red);animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.4}}
 #send{background:linear-gradient(135deg,#5cc8ff,#3aa6e6);border:none;color:#05070d;box-shadow:0 0 16px rgba(92,200,255,0.4)}
@@ -3125,7 +3144,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 
 @media(max-width:900px){
   .col-core,.col-comms,.col-side,.col-4,.col-6,.col-8{grid-column:span 12}
-  .core{min-height:auto;padding:6px 0}.reactor{width:150px;height:150px}
+  .core{min-height:auto;padding:6px 0}.reactor{width:132px;height:158px}
   .comms{min-height:auto}.feed{max-height:300px}
   .wrap{padding:10px 11px 24px}
   .hdr-r{gap:10px;font-size:8px}
@@ -3153,25 +3172,49 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 
   <div class="grid">
 
-    <!-- CORE -->
+    <!-- CORE — a projected hologram figure; the brain is a live Obsidian-style neuron graph -->
     <div class="card col-core">
       <div class="core" id="core">
         <div class="reactor">
-          <svg viewBox="0 0 200 200">
-            <g class="rk" fill="none" stroke="#5cc8ff">
-              <circle cx="100" cy="100" r="86" stroke-opacity="0.15" stroke-width="1"/>
-              <g id="ticks"></g>
+          <div class="holo-scan"></div>
+          <svg viewBox="0 0 200 240">
+            <defs>
+              <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0">
+                <stop offset="0" stop-color="#5cc8ff" stop-opacity="0.22"/>
+                <stop offset="1" stop-color="#5cc8ff" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <polygon points="76,222 124,222 108,96 92,96" fill="url(#beam)"/>
+            <ellipse class="rk" cx="100" cy="223" rx="52" ry="9" fill="none" stroke="#5cc8ff" stroke-opacity="0.45" stroke-width="1.3" stroke-dasharray="24 12"/>
+            <ellipse class="rk rev" cx="100" cy="223" rx="36" ry="6" fill="none" stroke="#5cc8ff" stroke-opacity="0.6" stroke-width="1.3" stroke-dasharray="16 9"/>
+            <g class="holo-figure" fill="none" stroke="#5cc8ff">
+              <path d="M42 214 C42 150 62 122 100 122 C138 122 158 150 158 214" stroke-opacity="0.5" stroke-width="1.4"/>
+              <path d="M56 214 C56 162 72 140 100 140 C128 140 144 162 144 214" stroke-opacity="0.26" stroke-width="1"/>
+              <path d="M96 122 L96 100 M104 122 L104 100" stroke-opacity="0.4" stroke-width="1.2"/>
+              <ellipse cx="100" cy="80" rx="29" ry="34" stroke-opacity="0.55" stroke-width="1.4"/>
+              <path d="M74 70 Q100 62 126 70" stroke-opacity="0.22" stroke-width="0.9"/>
+              <path d="M72 92 Q100 104 128 92" stroke-opacity="0.22" stroke-width="0.9"/>
+              <g class="brain">
+                <line class="synapse" x1="88" y1="66" x2="100" y2="74" style="animation-delay:.1s"/>
+                <line class="synapse" x1="100" y1="74" x2="114" y2="68" style="animation-delay:.4s"/>
+                <line class="synapse" x1="88" y1="66" x2="86" y2="84" style="animation-delay:.2s"/>
+                <line class="synapse" x1="100" y1="74" x2="98" y2="90" style="animation-delay:.5s"/>
+                <line class="synapse" x1="114" y1="68" x2="116" y2="86" style="animation-delay:.3s"/>
+                <line class="synapse" x1="86" y1="84" x2="98" y2="90" style="animation-delay:.6s"/>
+                <line class="synapse" x1="98" y1="90" x2="116" y2="86" style="animation-delay:.15s"/>
+                <line class="synapse" x1="86" y1="84" x2="94" y2="98" style="animation-delay:.45s"/>
+                <line class="synapse" x1="98" y1="90" x2="106" y2="98" style="animation-delay:.25s"/>
+                <line class="synapse" x1="106" y1="98" x2="116" y2="86" style="animation-delay:.55s"/>
+                <circle class="neuron" cx="88" cy="66" r="2.4" style="animation-delay:0s"/>
+                <circle class="neuron" cx="100" cy="74" r="2.8" style="animation-delay:.3s"/>
+                <circle class="neuron" cx="114" cy="68" r="2.2" style="animation-delay:.6s"/>
+                <circle class="neuron" cx="86" cy="84" r="2.3" style="animation-delay:.15s"/>
+                <circle class="neuron" cx="98" cy="90" r="2.6" style="animation-delay:.45s"/>
+                <circle class="neuron" cx="116" cy="86" r="2.2" style="animation-delay:.75s"/>
+                <circle class="neuron" cx="94" cy="98" r="2" style="animation-delay:.9s"/>
+                <circle class="neuron" cx="106" cy="98" r="2" style="animation-delay:.2s"/>
+              </g>
             </g>
-            <g class="rk rev" fill="none" stroke="#5cc8ff" stroke-opacity="0.5" stroke-width="2">
-              <circle cx="100" cy="100" r="70" stroke-dasharray="30 18"/>
-            </g>
-            <g class="rk fast" fill="none" stroke="#5cc8ff" stroke-opacity="0.7" stroke-width="2.5">
-              <path d="M100 44 a56 56 0 0 1 48 28" stroke-linecap="round"/>
-              <path d="M100 156 a56 56 0 0 1 -48 -28" stroke-linecap="round"/>
-            </g>
-            <circle cx="100" cy="100" r="40" fill="rgba(92,200,255,0.08)" stroke="#5cc8ff" stroke-opacity="0.4"/>
-            <circle cx="100" cy="100" r="40" fill="url(#g)"/>
-            <defs><radialGradient id="g"><stop offset="0" stop-color="#5cc8ff" stop-opacity="0.5"/><stop offset="1" stop-color="#5cc8ff" stop-opacity="0"/></radialGradient></defs>
           </svg>
           <div class="core-pct"><b id="core-pct">—</b><span>CORE INTEGRITY</span></div>
         </div>
@@ -3273,11 +3316,6 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 const $=id=>document.getElementById(id);
 const API=(p,o)=>fetch(p,o).then(r=>r.json());
 const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-/* ── ticks on reactor ── */
-(()=>{let s='';for(let i=0;i<48;i++){const a=i/48*Math.PI*2,l=i%4===0;const r0=86,r1=l?78:82;
-  s+=`<line x1="${100+r0*Math.cos(a)}" y1="${100+r0*Math.sin(a)}" x2="${100+r1*Math.cos(a)}" y2="${100+r1*Math.sin(a)}" stroke-opacity="${l?0.5:0.2}" stroke-width="${l?1.4:0.7}"/>`;}
-  $('ticks').innerHTML=s;})();
 
 /* ── clock (Central) ── */
 const DNAMES=['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
