@@ -1157,13 +1157,13 @@ _TOOL_FNS = {
     "read_email":    lambda a: run_on_pc("read_email", {"count": a.get("count", 5)}),
     "send_email":    lambda a: run_on_pc("send_email", {"to": a.get("to", ""), "subject": a.get("subject", ""), "body": a.get("body", "")}, timeout=120),
     "search_notes":  lambda a: _tool_search_notes(a.get("query", ""), a.get("k", 5)),
-    "browse_open":   lambda a: run_on_browser("browser_open", {"url": _resolve_site(a.get("url", ""))}, timeout=45),
-    "browse_look":   lambda a: run_on_browser("browser_look", {}, timeout=25),
-    "browse_click":  lambda a: run_on_browser("browser_click", {"ref": a.get("ref")}, timeout=30),
-    "browse_type":   lambda a: run_on_browser("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=30),
-    "browse_scroll": lambda a: run_on_browser("browser_scroll", {"amount": a.get("amount", 600)}, timeout=25),
-    "browse_links":  lambda a: run_on_browser("browser_links", {}, timeout=25),
-    "browse_read":   lambda a: run_on_browser("browser_read", {}, timeout=25),
+    "browse_open":   lambda a: run_on_browser("browser_open", {"url": _resolve_site(a.get("url", ""))}, timeout=22),
+    "browse_look":   lambda a: run_on_browser("browser_look", {}, timeout=13),
+    "browse_click":  lambda a: run_on_browser("browser_click", {"ref": a.get("ref")}, timeout=15),
+    "browse_type":   lambda a: run_on_browser("browser_type", {"ref": a.get("ref"), "text": a.get("text", ""), "enter": a.get("enter", False)}, timeout=15),
+    "browse_scroll": lambda a: run_on_browser("browser_scroll", {"amount": a.get("amount", 600)}, timeout=12),
+    "browse_links":  lambda a: run_on_browser("browser_links", {}, timeout=13),
+    "browse_read":   lambda a: run_on_browser("browser_read", {}, timeout=15),
 }
 
 AGENT_INSTRUCTIONS = (
@@ -2292,7 +2292,7 @@ def run_on_ext(action, args, timeout=40):
         c = ext_commands.get(cid)
         if c and c["status"] == "done":
             return c["result"]
-        time.sleep(0.25)
+        time.sleep(0.15)
     if cid in ext_commands:
         ext_commands[cid]["status"] = "expired"
     return "The browser extension didn't respond — is it installed and is a normal tab open?"
@@ -2300,7 +2300,7 @@ def run_on_ext(action, args, timeout=40):
 def run_on_browser(action, args, timeout=45):
     """Prefer the real-browser EXTENSION; fall back to the local agent's Chromium."""
     if ext_online():
-        return run_on_ext(action, args, timeout=min(timeout, 40))
+        return run_on_ext(action, args, timeout=min(timeout, 22))
     return run_on_pc(action, args, timeout=timeout)
 
 @app.route("/ext/poll")
