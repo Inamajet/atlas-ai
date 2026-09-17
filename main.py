@@ -3017,46 +3017,34 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .hdr-r b{color:var(--cy);font-weight:500}
 .hdr-r .live{color:var(--green)}.hdr-r .off{color:var(--txf)}
 
-/* grid */
-.grid{display:grid;gap:18px;grid-template-columns:repeat(12,1fr)}
+/* hologram stage — full-viewport, sits BEHIND everything (z-index 0). .wrap (z-index 1)
+   floats its glass rails over it. Rendered on canvas by a procedural neuron-mesh figure
+   (see the holo engine script) so it scales cleanly to any screen size. */
+.holo-stage{position:fixed;inset:0;z-index:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-end;pointer-events:none;overflow:hidden}
+#holo-canvas{position:absolute;inset:0;width:100%;height:100%}
+.core-pct{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;margin-bottom:8vh}
+.core-pct b{font-size:20px;font-weight:700;color:#eaf4ff;text-shadow:0 0 18px rgba(92,200,255,0.6);letter-spacing:.03em}
+.core-pct span{font-family:var(--mono);font-size:7px;letter-spacing:.2em;color:var(--txf);margin-top:2px}
+.core-meta{position:relative;z-index:1;text-align:center;margin-bottom:3vh}
+.core-meta .t{font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--txf)}
+.core-meta .p{font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--cy);margin-top:3px}
+.core-meta .s{font-family:var(--mono);font-size:8px;color:var(--txf);letter-spacing:.14em;margin-top:5px}
+.holo-stage.think .core-pct b{color:var(--amber);text-shadow:0 0 20px rgba(255,180,77,0.6)}
+
+/* side glass rails — everything else floats either side of the hologram, leaving the
+   center of the screen clear so the figure reads clean and uninterrupted. */
+.rails{position:relative;z-index:1;display:flex;justify-content:space-between;gap:22px;align-items:flex-start;pointer-events:none;min-height:74vh}
+.rail{display:flex;flex-direction:column;gap:16px;width:100%;max-width:340px;pointer-events:auto}
+
+/* below-the-fold grid — heavier panels (system bridge, galaxy) that don't need to float */
+.grid{position:relative;z-index:1;display:grid;gap:18px;grid-template-columns:repeat(12,1fr)}
 .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:18px;padding:18px 20px;position:relative;backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);box-shadow:0 10px 34px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.02);transition:border-color .3s var(--ease),box-shadow .3s var(--ease)}
 .card::before{content:'';position:absolute;top:-1px;left:20px;width:26px;height:2px;border-radius:2px;background:var(--cy);opacity:.55}
 .lbl{font-family:var(--mono);font-size:8.5px;letter-spacing:.26em;color:var(--cydim);text-transform:uppercase;display:flex;align-items:center;gap:7px;margin-bottom:11px}
 .lbl .r{margin-left:auto;color:var(--txf);letter-spacing:.14em}
-.col-core{grid-column:span 3}.col-comms{grid-column:span 6}.col-side{grid-column:span 3}
+.col-comms{grid-column:span 12}.col-side{grid-column:span 12}
 .col-4{grid-column:span 4}.col-6{grid-column:span 6}.col-8{grid-column:span 8}.col-12{grid-column:span 12}
-
-/* core / hologram figure — a projected human whose brain is a live Obsidian-style
-   neuron graph. The projector-base rings reuse .rk (kept for the existing spin timing
-   + .think speed-up), so no JS changes were needed to wire this up. */
-.core{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:310px}
-.reactor{width:168px;height:202px;position:relative}
-.reactor svg{width:100%;height:100%;overflow:visible}
-.rk{transform-origin:100px 223px;animation:spin 14s linear infinite}
-.rk.rev{animation:spin 22s linear infinite reverse}
-@keyframes spin{to{transform:rotate(360deg)}}
-.holo-figure{animation:holoFlicker 6.5s ease-in-out infinite}
-@keyframes holoFlicker{0%,100%{opacity:1}91%{opacity:1}92%{opacity:.82}93%{opacity:1}96%{opacity:1}96.6%{opacity:.88}97%{opacity:1}}
-.holo-scan{position:absolute;left:20%;right:20%;top:-4px;height:20px;pointer-events:none;z-index:2;
-  background:linear-gradient(180deg,transparent,rgba(92,200,255,.4),transparent);mix-blend-mode:screen;
-  animation:holoSweep 3.6s ease-in-out infinite}
-@keyframes holoSweep{0%{transform:translateY(0);opacity:0}8%{opacity:.9}90%{opacity:.9}100%{transform:translateY(230px);opacity:0}}
-.neuron{fill:var(--gold);filter:drop-shadow(0 0 3px rgba(201,168,76,.9));transform-box:fill-box;transform-origin:center;
-  animation:neuronPulse 2.6s ease-in-out infinite}
-@keyframes neuronPulse{0%,100%{opacity:.55;transform:scale(.85)}50%{opacity:1;transform:scale(1.18)}}
-.synapse{stroke:var(--gold);stroke-width:.7;opacity:.2;animation:synapsePulse 2.6s ease-in-out infinite}
-@keyframes synapsePulse{0%,100%{opacity:.14}50%{opacity:.6}}
-.core.think .holo-scan{animation-duration:1s}
-.core.think .rk{animation-duration:5s}
-.core.think .neuron{fill:var(--amber);filter:drop-shadow(0 0 4px rgba(255,180,77,.9));animation-duration:.8s}
-.core.think .synapse{stroke:var(--amber);animation-duration:.8s}
-.core-pct{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:2px}
-.core-pct b{font-size:19px;font-weight:700;color:#eaf4ff;text-shadow:0 0 18px rgba(92,200,255,0.6);letter-spacing:.03em}
-.core-pct span{font-family:var(--mono);font-size:6.5px;letter-spacing:.2em;color:var(--txf);margin-top:2px}
-.core-meta{margin-top:12px}
-.core-meta .t{font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--txf)}
-.core-meta .p{font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--cy);margin-top:3px}
-.core-meta .s{font-family:var(--mono);font-size:8px;color:var(--txf);letter-spacing:.14em;margin-top:5px}
 .core.think .core-pct b{color:var(--amber);text-shadow:0 0 20px rgba(255,180,77,0.6)}
 
 /* comms */
@@ -3143,8 +3131,9 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 .cap-row .v.warn{color:var(--amber)}.cap-row .v.ok{color:var(--cy)}
 
 @media(max-width:900px){
-  .col-core,.col-comms,.col-side,.col-4,.col-6,.col-8{grid-column:span 12}
-  .core{min-height:auto;padding:6px 0}.reactor{width:132px;height:158px}
+  .col-comms,.col-side,.col-4,.col-6,.col-8{grid-column:span 12}
+  .rails{flex-direction:column;min-height:auto}
+  .rail{max-width:100%}
   .comms{min-height:auto}.feed{max-height:300px}
   .wrap{padding:10px 11px 24px}
   .hdr-r{gap:10px;font-size:8px}
@@ -3152,6 +3141,18 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 </style>
 </head>
 <body>
+
+<!-- HOLOGRAM STAGE — full-viewport projected figure; the brain is a live neuron mesh -->
+<div class="holo-stage" id="core">
+  <canvas id="holo-canvas"></canvas>
+  <div class="core-pct"><b id="core-pct">—</b><span>CORE INTEGRITY</span></div>
+  <div class="core-meta">
+    <div class="t">POWER CELL</div>
+    <div class="p" id="core-model">GEMINI 2.5</div>
+    <div class="s" id="core-status">◇ STANDBY</div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <div class="hdr">
@@ -3170,126 +3171,84 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
     </div>
   </div>
 
-  <div class="grid">
+  <!-- Everything else floats in two glass rails, either side of the hologram -->
+  <div class="rails">
+    <div class="rail rail-l">
 
-    <!-- CORE — a projected hologram figure; the brain is a live Obsidian-style neuron graph -->
-    <div class="card col-core">
-      <div class="core" id="core">
-        <div class="reactor">
-          <div class="holo-scan"></div>
-          <svg viewBox="0 0 200 240">
-            <defs>
-              <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0">
-                <stop offset="0" stop-color="#5cc8ff" stop-opacity="0.22"/>
-                <stop offset="1" stop-color="#5cc8ff" stop-opacity="0"/>
-              </linearGradient>
-            </defs>
-            <polygon points="76,222 124,222 108,96 92,96" fill="url(#beam)"/>
-            <ellipse class="rk" cx="100" cy="223" rx="52" ry="9" fill="none" stroke="#5cc8ff" stroke-opacity="0.45" stroke-width="1.3" stroke-dasharray="24 12"/>
-            <ellipse class="rk rev" cx="100" cy="223" rx="36" ry="6" fill="none" stroke="#5cc8ff" stroke-opacity="0.6" stroke-width="1.3" stroke-dasharray="16 9"/>
-            <g class="holo-figure" fill="none" stroke="#5cc8ff">
-              <path d="M42 214 C42 150 62 122 100 122 C138 122 158 150 158 214" stroke-opacity="0.5" stroke-width="1.4"/>
-              <path d="M56 214 C56 162 72 140 100 140 C128 140 144 162 144 214" stroke-opacity="0.26" stroke-width="1"/>
-              <path d="M96 122 L96 100 M104 122 L104 100" stroke-opacity="0.4" stroke-width="1.2"/>
-              <ellipse cx="100" cy="80" rx="29" ry="34" stroke-opacity="0.55" stroke-width="1.4"/>
-              <path d="M74 70 Q100 62 126 70" stroke-opacity="0.22" stroke-width="0.9"/>
-              <path d="M72 92 Q100 104 128 92" stroke-opacity="0.22" stroke-width="0.9"/>
-              <g class="brain">
-                <line class="synapse" x1="88" y1="66" x2="100" y2="74" style="animation-delay:.1s"/>
-                <line class="synapse" x1="100" y1="74" x2="114" y2="68" style="animation-delay:.4s"/>
-                <line class="synapse" x1="88" y1="66" x2="86" y2="84" style="animation-delay:.2s"/>
-                <line class="synapse" x1="100" y1="74" x2="98" y2="90" style="animation-delay:.5s"/>
-                <line class="synapse" x1="114" y1="68" x2="116" y2="86" style="animation-delay:.3s"/>
-                <line class="synapse" x1="86" y1="84" x2="98" y2="90" style="animation-delay:.6s"/>
-                <line class="synapse" x1="98" y1="90" x2="116" y2="86" style="animation-delay:.15s"/>
-                <line class="synapse" x1="86" y1="84" x2="94" y2="98" style="animation-delay:.45s"/>
-                <line class="synapse" x1="98" y1="90" x2="106" y2="98" style="animation-delay:.25s"/>
-                <line class="synapse" x1="106" y1="98" x2="116" y2="86" style="animation-delay:.55s"/>
-                <circle class="neuron" cx="88" cy="66" r="2.4" style="animation-delay:0s"/>
-                <circle class="neuron" cx="100" cy="74" r="2.8" style="animation-delay:.3s"/>
-                <circle class="neuron" cx="114" cy="68" r="2.2" style="animation-delay:.6s"/>
-                <circle class="neuron" cx="86" cy="84" r="2.3" style="animation-delay:.15s"/>
-                <circle class="neuron" cx="98" cy="90" r="2.6" style="animation-delay:.45s"/>
-                <circle class="neuron" cx="116" cy="86" r="2.2" style="animation-delay:.75s"/>
-                <circle class="neuron" cx="94" cy="98" r="2" style="animation-delay:.9s"/>
-                <circle class="neuron" cx="106" cy="98" r="2" style="animation-delay:.2s"/>
-              </g>
-            </g>
-          </svg>
-          <div class="core-pct"><b id="core-pct">—</b><span>CORE INTEGRITY</span></div>
+      <!-- CHRONO + ATMOS -->
+      <div class="card col-side">
+        <div class="lbl">◷ CHRONOMETER · FRISCO</div>
+        <div class="chrono">
+          <div class="clk" id="clk">00:00</div>
+          <div class="dt" id="dt">—</div>
         </div>
-        <div class="core-meta">
-          <div class="t">POWER CELL</div>
-          <div class="p" id="core-model">GEMINI 2.5</div>
-          <div class="s" id="core-status">◇ STANDBY</div>
+        <div class="atmos">
+          <div class="lbl" style="margin-bottom:9px">☁ ATMOSPHERICS</div>
+          <div class="big"><span class="tmp" id="wx-t">—</span><span class="cnd" id="wx-c">—</span></div>
+          <div class="sub" id="wx-s"></div>
+          <div class="src">SRC · NATIONAL WEATHER SERVICE</div>
         </div>
       </div>
+
+      <!-- TIMETABLE -->
+      <div class="card col-4">
+        <div class="lbl">▤ TIMETABLE 07:00 → 23:00 <span class="r" id="tt-next"></span></div>
+        <div class="tt-active"><div class="k">ACTIVE BLOCK</div><div class="v" id="tt-cur">—</div></div>
+        <div class="tt-list" id="tt-list"></div>
+      </div>
+
+      <!-- OBJECTIVES -->
+      <div class="card col-4">
+        <div class="lbl">◇ OBJECTIVES <span class="r" id="obj-r">0 OPEN</span></div>
+        <div class="addrow"><input id="obj-in" placeholder="New objective…"><button id="obj-add">+</button></div>
+        <div id="obj-list"></div>
+      </div>
+
     </div>
 
-    <!-- COMMS -->
-    <div class="card col-comms">
-      <div class="lbl">▷ COMMS CONSOLE <span class="r" id="comms-r"></span></div>
-      <div class="comms">
-        <div class="modes" id="modes"></div>
-        <div class="feed" id="feed"></div>
-        <div class="iw">
-          <input id="inp" placeholder="Speak or type your instruction, Sir…" autocomplete="off">
-          <button class="ib mic" id="mic" title="Speak">🎙</button>
-          <button class="ib" id="conv" title="Conversation mode — just talk, hands-free">💬</button>
-          <button class="ib" id="wake" title="Wake word: say 'Icarus …'">👂</button>
-          <button class="ib" id="eye" title="Read my screen (upload)">◉</button>
-          <input type="file" id="img" accept="image/*" style="display:none">
-          <button class="ib" id="ttsb" title="Voice replies">🔊</button>
-          <button class="ib" id="send" title="Send">➤</button>
+    <div class="rail rail-r">
+
+      <!-- COMMS -->
+      <div class="card col-comms">
+        <div class="lbl">▷ COMMS CONSOLE <span class="r" id="comms-r"></span></div>
+        <div class="comms">
+          <div class="modes" id="modes"></div>
+          <div class="feed" id="feed"></div>
+          <div class="iw">
+            <input id="inp" placeholder="Speak or type your instruction, Sir…" autocomplete="off">
+            <button class="ib mic" id="mic" title="Speak">🎙</button>
+            <button class="ib" id="conv" title="Conversation mode — just talk, hands-free">💬</button>
+            <button class="ib" id="wake" title="Wake word: say 'Icarus …'">👂</button>
+            <button class="ib" id="eye" title="Read my screen (upload)">◉</button>
+            <input type="file" id="img" accept="image/*" style="display:none">
+            <button class="ib" id="ttsb" title="Voice replies">🔊</button>
+            <button class="ib" id="send" title="Send">➤</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- CHRONO + ATMOS -->
-    <div class="card col-side">
-      <div class="lbl">◷ CHRONOMETER · FRISCO</div>
-      <div class="chrono">
-        <div class="clk" id="clk">00:00</div>
-        <div class="dt" id="dt">—</div>
+      <!-- MEMORY -->
+      <div class="card col-4">
+        <div class="lbl">◉ MEMORY MATRIX <span class="r" id="mem-r"></span></div>
+        <div class="addrow"><input id="mem-in" placeholder="Remember this, Sir…"><button id="mem-add">+</button></div>
+        <button id="adapt-btn" style="width:100%;margin:8px 0 6px;padding:7px;background:transparent;border:1px solid rgba(201,168,76,.35);color:#c9a84c;font:700 9px var(--mono,monospace);letter-spacing:.2em;cursor:pointer">⟳ STUDY ME · ADAPT</button>
+        <div id="mem-list"></div>
       </div>
-      <div class="atmos">
-        <div class="lbl" style="margin-bottom:9px">☁ ATMOSPHERICS</div>
-        <div class="big"><span class="tmp" id="wx-t">—</span><span class="cnd" id="wx-c">—</span></div>
-        <div class="sub" id="wx-s"></div>
-        <div class="src">SRC · NATIONAL WEATHER SERVICE</div>
+
+      <!-- CAPABILITY MATRIX -->
+      <div class="card col-4">
+        <div class="lbl">▦ CAPABILITY MATRIX</div>
+        <div id="cap"></div>
       </div>
-    </div>
 
-    <!-- KNOWLEDGE GALAXY -->
-    <div class="card col-12">
-      <div class="lbl">🌌 KNOWLEDGE GALAXY <span class="r"><a href="/galaxy" target="_blank" style="color:#c9a84c;text-decoration:none">FULLSCREEN ↗</a></span></div>
-      <iframe src="/galaxy" title="Knowledge Galaxy" style="width:100%;height:300px;border:0;border-radius:2px;background:#000004;display:block"></iframe>
     </div>
+  </div>
 
-    <!-- TIMETABLE -->
-    <div class="card col-4">
-      <div class="lbl">▤ TIMETABLE 07:00 → 23:00 <span class="r" id="tt-next"></span></div>
-      <div class="tt-active"><div class="k">ACTIVE BLOCK</div><div class="v" id="tt-cur">—</div></div>
-      <div class="tt-list" id="tt-list"></div>
-    </div>
-
-    <!-- OBJECTIVES -->
-    <div class="card col-4">
-      <div class="lbl">◇ OBJECTIVES <span class="r" id="obj-r">0 OPEN</span></div>
-      <div class="addrow"><input id="obj-in" placeholder="New objective…"><button id="obj-add">+</button></div>
-      <div id="obj-list"></div>
-    </div>
-
-    <!-- MEMORY -->
-    <div class="card col-4">
-      <div class="lbl">◉ MEMORY MATRIX <span class="r" id="mem-r"></span></div>
-      <div class="addrow"><input id="mem-in" placeholder="Remember this, Sir…"><button id="mem-add">+</button></div>
-      <button id="adapt-btn" style="width:100%;margin:8px 0 6px;padding:7px;background:transparent;border:1px solid rgba(201,168,76,.35);color:#c9a84c;font:700 9px var(--mono,monospace);letter-spacing:.2em;cursor:pointer">⟳ STUDY ME · ADAPT</button>
-      <div id="mem-list"></div>
-    </div>
+  <!-- Heavier panels sit below the fold, out of the hologram's way -->
+  <div class="grid below">
 
     <!-- SYSTEM BRIDGE -->
-    <div class="card col-8">
+    <div class="card col-12">
       <div class="lbl">⚙ SYSTEM BRIDGE <span class="r" id="br-r">OFFLINE</span></div>
       <div class="bridge">
         <div class="st off" id="br-st">NO DESKTOP AGENT DETECTED</div>
@@ -3303,10 +3262,10 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
       </div>
     </div>
 
-    <!-- CAPABILITY MATRIX -->
-    <div class="card col-4">
-      <div class="lbl">▦ CAPABILITY MATRIX</div>
-      <div id="cap"></div>
+    <!-- KNOWLEDGE GALAXY -->
+    <div class="card col-12">
+      <div class="lbl">🌌 KNOWLEDGE GALAXY <span class="r"><a href="/galaxy" target="_blank" style="color:#c9a84c;text-decoration:none">FULLSCREEN ↗</a></span></div>
+      <iframe src="/galaxy" title="Knowledge Galaxy" style="width:100%;height:300px;border:0;border-radius:2px;background:#000004;display:block"></iframe>
     </div>
 
   </div>
@@ -3316,6 +3275,162 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
 const $=id=>document.getElementById(id);
 const API=(p,o)=>fetch(p,o).then(r=>r.json());
 const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+/* ── HOLOGRAM ENGINE — full-screen procedural neuron-mesh figure. Pure canvas2d, no
+   external 3D model/library: a humanoid built from a few primitives (head/torso/arms/
+   hands), filled with a nearest-neighbor point mesh for the wireframe look, with a gold
+   "Obsidian neuron" cluster in the head standing in for the brain. Reads .think off
+   #core each frame to shift color/speed — no other script on the page needed to change. */
+(function(){
+  const cv=$('holo-canvas'); if(!cv)return;
+  const ctx=cv.getContext('2d');
+  const MW=200, MH=340;
+  let scale=1, offX=0, offY=0, dpr=1;
+
+  function fit(){
+    dpr=Math.min(window.devicePixelRatio||1,2);
+    const vw=window.innerWidth, vh=window.innerHeight;
+    cv.width=vw*dpr; cv.height=vh*dpr;
+    cv.style.width=vw+'px'; cv.style.height=vh+'px';
+    const wCap=vw<720?vw*0.9:vw*0.5;
+    scale=Math.min((vh*0.86)/MH, wCap/MW);
+    offX=vw/2-(MW*scale)/2;
+    offY=vh-(MH*scale)-vh*0.03;
+  }
+  window.addEventListener('resize',fit);
+
+  const HEAD={cx:100,cy:50,rx:25,ry:30};
+  const NECK=[[87,72],[113,72],[110,100],[90,100]];
+  const TORSO=[[50,96],[150,96],[136,224],[64,224]];
+  const ARM_L=[{a:[52,112],b:[34,180],r0:13,r1:11},{a:[34,180],b:[24,260],r0:11,r1:8}];
+  const ARM_R=[{a:[148,112],b:[166,180],r0:13,r1:11},{a:[166,180],b:[176,260],r0:11,r1:8}];
+  const HAND_L={cx:22,cy:266,rx:11,ry:14}, HAND_R={cx:178,cy:266,rx:11,ry:14};
+
+  function inEllipse(x,y,e){const dx=(x-e.cx)/e.rx,dy=(y-e.cy)/e.ry;return dx*dx+dy*dy<=1;}
+  function inQuad(x,y,q){
+    let sign=0;
+    for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4];
+      const cross=(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);
+      if(cross!==0){const s=cross>0?1:-1; if(sign===0)sign=s; else if(s!==sign)return false;}}
+    return true;
+  }
+  function distSeg(x,y,a,b){
+    const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy||1;
+    let t=((x-a[0])*dx+(y-a[1])*dy)/len2; t=Math.max(0,Math.min(1,t));
+    return {d:Math.hypot(x-(a[0]+t*dx),y-(a[1]+t*dy)),t};
+  }
+  function inArm(x,y,arm){
+    for(const seg of arm){const{d,t}=distSeg(x,y,seg.a,seg.b);
+      if(d<=seg.r0+(seg.r1-seg.r0)*t)return true;}
+    return false;
+  }
+  function inBody(x,y){
+    return inEllipse(x,y,HEAD)||inQuad(x,y,NECK)||inQuad(x,y,TORSO)||inArm(x,y,ARM_L)||inArm(x,y,ARM_R)
+      ||inEllipse(x,y,HAND_L)||inEllipse(x,y,HAND_R);
+  }
+  function outlinePath(ctx){
+    ctx.beginPath();
+    ctx.ellipse(...toScreen(HEAD.cx,HEAD.cy),HEAD.rx*scale,HEAD.ry*scale,0,0,Math.PI*2);
+    [NECK,TORSO].forEach(q=>{ctx.moveTo(...toScreen(q[0][0],q[0][1]));
+      for(let i=1;i<q.length;i++)ctx.lineTo(...toScreen(q[i][0],q[i][1])); ctx.closePath();});
+    [ARM_L,ARM_R].forEach(arm=>arm.forEach(seg=>{
+      const[ax,ay]=toScreen(seg.a[0],seg.a[1]),[bx,by]=toScreen(seg.b[0],seg.b[1]);
+      const dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
+      const r0=seg.r0*scale,r1=seg.r1*scale;
+      ctx.moveTo(ax+nx*r0,ay+ny*r0); ctx.lineTo(bx+nx*r1,by+ny*r1);
+      ctx.moveTo(ax-nx*r0,ay-ny*r0); ctx.lineTo(bx-nx*r1,by-ny*r1);
+    }));
+    [HAND_L,HAND_R].forEach(h=>{ctx.moveTo(...toScreen(h.cx+h.rx,h.cy));
+      ctx.ellipse(...toScreen(h.cx,h.cy),h.rx*scale,h.ry*scale,0,0,Math.PI*2);});
+  }
+
+  const pts=[]; const rnd=(a,b)=>a+Math.random()*(b-a);
+  (function gen(){
+    let tries=0;
+    while(pts.length<170&&tries<6000){
+      tries++;
+      const x=rnd(14,186), y=rnd(10,286);
+      if(!inBody(x,y))continue;
+      let tooClose=false;
+      for(const p of pts){if((p.x-x)**2+(p.y-y)**2<48){tooClose=true;break;}}
+      if(tooClose)continue;
+      pts.push({x,y,head:inEllipse(x,y,HEAD),ph:Math.random()*Math.PI*2,sp:0.6+Math.random()*0.8});
+    }
+  })();
+  const headIdx=pts.map((_,i)=>i).filter(i=>pts[i].head);
+  const neuronSet=new Set();
+  for(let i=0;i<Math.min(9,headIdx.length);i++)neuronSet.add(headIdx[Math.floor(Math.random()*headIdx.length)]);
+  pts.forEach((p,i)=>p.neuron=neuronSet.has(i));
+
+  const edges=[];
+  for(let i=0;i<pts.length;i++){
+    const d=[];
+    for(let j=0;j<pts.length;j++){if(i===j)continue; d.push([j,(pts[i].x-pts[j].x)**2+(pts[i].y-pts[j].y)**2]);}
+    d.sort((a,b)=>a[1]-b[1]);
+    for(let k=0;k<3;k++){if(d[k]&&d[k][1]<900){
+      const j=d[k][0]; if(!edges.some(e=>(e[0]===i&&e[1]===j)||(e[0]===j&&e[1]===i)))edges.push([i,j]);
+    }}
+  }
+
+  function toScreen(x,y){return [offX+x*scale,offY+y*scale];}
+  let t0=performance.now();
+  function draw(now){
+    t0=now;
+    const think=$('core').classList.contains('think');
+    const cyan=[92,200,255], amber=[255,180,77];
+    const col=think?amber:cyan, gold=think?amber:[201,168,76];
+    const time=now/1000;
+
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle='rgba(3,6,12,0.30)';
+    ctx.fillRect(0,0,cv.width/dpr,cv.height/dpr);
+
+    const sway=Math.sin(time*0.5)*2.4;
+    ctx.save(); ctx.translate(sway,0);
+
+    const [fx,fy]=toScreen(100,300);
+    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.28)`; ctx.lineWidth=1;
+    for(let r=1;r<=3;r++){ctx.beginPath();ctx.ellipse(fx,fy,29*scale*r,5*scale*r,0,0,Math.PI*2);ctx.stroke();}
+    for(let a=0;a<12;a++){const ang=a/12*Math.PI*2;
+      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx+Math.cos(ang)*86*scale,fy+Math.sin(ang)*16*scale);ctx.stroke();}
+
+    ctx.lineWidth=1.1; ctx.shadowColor=`rgba(${col[0]},${col[1]},${col[2]},0.8)`; ctx.shadowBlur=5;
+    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.65)`;
+    outlinePath(ctx); ctx.stroke(); ctx.shadowBlur=0;
+
+    const flicker=0.85+0.15*Math.sin(time*3.1);
+    for(const[i,j]of edges){
+      const p=pts[i],q=pts[j],isBrain=p.neuron||q.neuron;
+      const[x1,y1]=toScreen(p.x,p.y),[x2,y2]=toScreen(q.x,q.y);
+      const c=isBrain?gold:col;
+      ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${isBrain?0.5*flicker:0.16*flicker})`;
+      ctx.lineWidth=isBrain?0.8:0.6;
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+    }
+    for(const p of pts){
+      const[x,y]=toScreen(p.x,p.y);
+      const pulse=0.6+0.4*Math.sin(time*p.sp*2+p.ph);
+      const c=p.neuron?gold:col;
+      const r=(p.neuron?2.6:1.5)*Math.max(scale/2.4,0.7)*pulse;
+      ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${p.neuron?0.95:0.55})`;
+      ctx.shadowColor=`rgba(${c[0]},${c[1]},${c[2]},0.9)`; ctx.shadowBlur=p.neuron?9:4;
+      ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+    }
+    ctx.shadowBlur=0;
+
+    const sy=(time*70)%window.innerHeight;
+    const grad=ctx.createLinearGradient(0,sy-40,0,sy+40);
+    grad.addColorStop(0,'rgba(92,200,255,0)');
+    grad.addColorStop(0.5,`rgba(${col[0]},${col[1]},${col[2]},0.10)`);
+    grad.addColorStop(1,'rgba(92,200,255,0)');
+    ctx.fillStyle=grad; ctx.fillRect(0,sy-40,cv.width/dpr,80);
+
+    ctx.restore();
+    requestAnimationFrame(draw);
+  }
+  fit();
+  requestAnimationFrame(draw);
+})();
 
 /* ── clock (Central) ── */
 const DNAMES=['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
