@@ -3310,7 +3310,7 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
 (function(){
   const cv=$('holo-canvas'); if(!cv)return;
   const ctx=cv.getContext('2d');
-  const MW=200, MH=340;
+  const MW=200, MH=260;
   let scale=1, offX=0, offY=0, dpr=1;
 
   function fit(){
@@ -3325,21 +3325,28 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
   }
   window.addEventListener('resize',fit);
 
-  const HEAD={cx:100,cy:50,rx:25,ry:30};
-  const NECK=[[87,72],[113,72],[110,100],[90,100]];
-  const TORSO=[[50,96],[150,96],[136,224],[64,224]];
-  const ARM_L=[{a:[52,112],b:[34,180],r0:13,r1:11},{a:[34,180],b:[24,260],r0:11,r1:8}];
-  const ARM_R=[{a:[148,112],b:[166,180],r0:13,r1:11},{a:[166,180],b:[176,260],r0:11,r1:8}];
-  const HAND_L={cx:22,cy:266,rx:11,ry:14}, HAND_R={cx:178,cy:266,rx:11,ry:14};
+  // A real (if stylized) human silhouette: head sized properly against the body, a
+  // torso that actually tapers (neck -> shoulder -> waist -> hip) instead of a boxy
+  // trapezoid, and arms that rest naturally at the sides instead of straight sticks.
+  const HEAD={cx:100,cy:46,rx:29,ry:33};
+  const TORSO_PROFILE=[[70,12],[92,14],[104,48],[130,38],[165,31],[210,34],[236,38]];
+  const ARM_L=[{a:[52,108],b:[42,168],r0:12,r1:10},{a:[42,168],b:[38,224],r0:10,r1:7}];
+  const ARM_R=[{a:[148,108],b:[158,168],r0:12,r1:10},{a:[158,168],b:[162,224],r0:10,r1:7}];
+  const HAND_L={cx:36,cy:230,rx:9,ry:12}, HAND_R={cx:164,cy:230,rx:9,ry:12};
 
   function inEllipse(x,y,e){const dx=(x-e.cx)/e.rx,dy=(y-e.cy)/e.ry;return dx*dx+dy*dy<=1;}
-  function inQuad(x,y,q){
-    let sign=0;
-    for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4];
-      const cross=(b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0]);
-      if(cross!==0){const s=cross>0?1:-1; if(sign===0)sign=s; else if(s!==sign)return false;}}
-    return true;
+  function torsoHalfWidth(y){
+    const p=TORSO_PROFILE;
+    if(y<p[0][0]||y>p[p.length-1][0])return null;
+    for(let i=0;i<p.length-1;i++){
+      if(y>=p[i][0]&&y<=p[i+1][0]){
+        const t=(y-p[i][0])/(p[i+1][0]-p[i][0]);
+        return p[i][1]+(p[i+1][1]-p[i][1])*t;
+      }
+    }
+    return null;
   }
+  function inTorso(x,y){const hw=torsoHalfWidth(y);return hw!==null&&Math.abs(x-100)<=hw;}
   function distSeg(x,y,a,b){
     const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy||1;
     let t=((x-a[0])*dx+(y-a[1])*dy)/len2; t=Math.max(0,Math.min(1,t));
@@ -3351,14 +3358,16 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
     return false;
   }
   function inBody(x,y){
-    return inEllipse(x,y,HEAD)||inQuad(x,y,NECK)||inQuad(x,y,TORSO)||inArm(x,y,ARM_L)||inArm(x,y,ARM_R)
+    return inEllipse(x,y,HEAD)||inTorso(x,y)||inArm(x,y,ARM_L)||inArm(x,y,ARM_R)
       ||inEllipse(x,y,HAND_L)||inEllipse(x,y,HAND_R);
   }
   function outlinePath(ctx){
     ctx.beginPath();
     ctx.ellipse(...toScreen(HEAD.cx,HEAD.cy),HEAD.rx*scale,HEAD.ry*scale,0,0,Math.PI*2);
-    [NECK,TORSO].forEach(q=>{ctx.moveTo(...toScreen(q[0][0],q[0][1]));
-      for(let i=1;i<q.length;i++)ctx.lineTo(...toScreen(q[i][0],q[i][1])); ctx.closePath();});
+    ctx.moveTo(...toScreen(100-TORSO_PROFILE[0][1],TORSO_PROFILE[0][0]));
+    for(const[y,hw]of TORSO_PROFILE)ctx.lineTo(...toScreen(100-hw,y));
+    for(let i=TORSO_PROFILE.length-1;i>=0;i--)ctx.lineTo(...toScreen(100+TORSO_PROFILE[i][1],TORSO_PROFILE[i][0]));
+    ctx.closePath();
     [ARM_L,ARM_R].forEach(arm=>arm.forEach(seg=>{
       const[ax,ay]=toScreen(seg.a[0],seg.a[1]),[bx,by]=toScreen(seg.b[0],seg.b[1]);
       const dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy)||1,nx=-dy/len,ny=dx/len;
@@ -3373,9 +3382,9 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
   const pts=[]; const rnd=(a,b)=>a+Math.random()*(b-a);
   (function gen(){
     let tries=0;
-    while(pts.length<170&&tries<6000){
+    while(pts.length<140&&tries<6000){
       tries++;
-      const x=rnd(14,186), y=rnd(10,286);
+      const x=rnd(18,182), y=rnd(10,244);
       if(!inBody(x,y))continue;
       let tooClose=false;
       for(const p of pts){if((p.x-x)**2+(p.y-y)**2<48){tooClose=true;break;}}
@@ -3414,11 +3423,11 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
     const sway=Math.sin(time*0.5)*2.4;
     ctx.save(); ctx.translate(sway,0);
 
-    const [fx,fy]=toScreen(100,300);
+    const [fx,fy]=toScreen(100,248);
     ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.28)`; ctx.lineWidth=1;
-    for(let r=1;r<=3;r++){ctx.beginPath();ctx.ellipse(fx,fy,29*scale*r,5*scale*r,0,0,Math.PI*2);ctx.stroke();}
+    for(let r=1;r<=3;r++){ctx.beginPath();ctx.ellipse(fx,fy,26*scale*r,5*scale*r,0,0,Math.PI*2);ctx.stroke();}
     for(let a=0;a<12;a++){const ang=a/12*Math.PI*2;
-      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx+Math.cos(ang)*86*scale,fy+Math.sin(ang)*16*scale);ctx.stroke();}
+      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx+Math.cos(ang)*78*scale,fy+Math.sin(ang)*14*scale);ctx.stroke();}
 
     ctx.lineWidth=1.1; ctx.shadowColor=`rgba(${col[0]},${col[1]},${col[2]},0.8)`; ctx.shadowBlur=5;
     ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.65)`;
