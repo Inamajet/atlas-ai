@@ -2944,7 +2944,7 @@ def vision():
 # voice. Never hardcode a key here — this repo is public on GitHub.
 FISH_KEY   = os.environ.get("FISH_KEY", "")
 FISH_VOICE = os.environ.get("FISH_VOICE", "")   # optional reference_id; blank = default voice
-ELEVENLABS_KEY   = os.environ.get("ELEVENLABS_KEY", "")
+ELEVENLABS_KEY   = os.environ.get("ELEVENLABS_KEY") or os.environ.get("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE = os.environ.get("ELEVENLABS_VOICE", "pNInz6obpgDQGcFmaJgB")  # "Adam"
 
 def _fish_tts(text):
@@ -3302,15 +3302,14 @@ const $=id=>document.getElementById(id);
 const API=(p,o)=>fetch(p,o).then(r=>r.json());
 const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-/* ── HOLOGRAM ENGINE — full-screen procedural neuron-mesh figure. Pure canvas2d, no
-   external 3D model/library: a humanoid built from a few primitives (head/torso/arms/
-   hands), filled with a nearest-neighbor point mesh for the wireframe look, with a gold
-   "Obsidian neuron" cluster in the head standing in for the brain. Reads .think off
-   #core each frame to shift color/speed — no other script on the page needed to change. */
+/* ── HOLOGRAM ENGINE — full-screen procedural human silhouette, canvas2d, no external
+   3D model. Filled with dense horizontal scan-lines (like a body-scan hologram) and a
+   bright glowing rim, arms held out from the body. Reads .think off #core each frame
+   to shift color/speed — no other script on the page needed to change. */
 (function(){
   const cv=$('holo-canvas'); if(!cv)return;
   const ctx=cv.getContext('2d');
-  const MW=200, MH=260;
+  const CX=140, MW=280, MH=250;
   let scale=1, offX=0, offY=0, dpr=1;
 
   function fit(){
@@ -3318,35 +3317,31 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
     const vw=window.innerWidth, vh=window.innerHeight;
     cv.width=vw*dpr; cv.height=vh*dpr;
     cv.style.width=vw+'px'; cv.style.height=vh+'px';
-    const wCap=vw<720?vw*0.9:vw*0.5;
+    const wCap=vw<720?vw*0.92:vw*0.56;
     scale=Math.min((vh*0.86)/MH, wCap/MW);
     offX=vw/2-(MW*scale)/2;
-    offY=vh-(MH*scale)-vh*0.03;
+    offY=vh-(MH*scale)-vh*0.025;
   }
   window.addEventListener('resize',fit);
 
-  // A real (if stylized) human silhouette: head sized properly against the body, a
-  // torso that actually tapers (neck -> shoulder -> waist -> hip) instead of a boxy
-  // trapezoid, and arms that rest naturally at the sides instead of straight sticks.
-  const HEAD={cx:100,cy:46,rx:29,ry:33};
-  const TORSO_PROFILE=[[70,12],[92,14],[104,48],[130,38],[165,31],[210,34],[236,38]];
-  const ARM_L=[{a:[52,108],b:[42,168],r0:12,r1:10},{a:[42,168],b:[38,224],r0:10,r1:7}];
-  const ARM_R=[{a:[148,108],b:[158,168],r0:12,r1:10},{a:[158,168],b:[162,224],r0:10,r1:7}];
-  const HAND_L={cx:36,cy:230,rx:9,ry:12}, HAND_R={cx:164,cy:230,rx:9,ry:12};
+  // Human silhouette: head, a torso that tapers (neck -> shoulder -> waist -> hip),
+  // and arms held OUT from the body (A-pose) — matching a body-scan hologram stance.
+  const HEAD={cx:CX,cy:44,rx:28,ry:32};
+  const TORSO_PROFILE=[[68,12],[90,14],[102,46],[128,37],[163,30],[206,33],[232,37]];
+  const ARM_L=[{a:[CX-46,106],b:[CX-96,142],r0:12,r1:10},{a:[CX-96,142],b:[CX-132,196],r0:10,r1:7}];
+  const ARM_R=[{a:[CX+46,106],b:[CX+96,142],r0:12,r1:10},{a:[CX+96,142],b:[CX+132,196],r0:10,r1:7}];
+  const HAND_L={cx:CX-136,cy:202,rx:9,ry:12}, HAND_R={cx:CX+136,cy:202,rx:9,ry:12};
 
   function inEllipse(x,y,e){const dx=(x-e.cx)/e.rx,dy=(y-e.cy)/e.ry;return dx*dx+dy*dy<=1;}
   function torsoHalfWidth(y){
     const p=TORSO_PROFILE;
     if(y<p[0][0]||y>p[p.length-1][0])return null;
     for(let i=0;i<p.length-1;i++){
-      if(y>=p[i][0]&&y<=p[i+1][0]){
-        const t=(y-p[i][0])/(p[i+1][0]-p[i][0]);
-        return p[i][1]+(p[i+1][1]-p[i][1])*t;
-      }
+      if(y>=p[i][0]&&y<=p[i+1][0]){const t=(y-p[i][0])/(p[i+1][0]-p[i][0]);return p[i][1]+(p[i+1][1]-p[i][1])*t;}
     }
     return null;
   }
-  function inTorso(x,y){const hw=torsoHalfWidth(y);return hw!==null&&Math.abs(x-100)<=hw;}
+  function inTorso(x,y){const hw=torsoHalfWidth(y);return hw!==null&&Math.abs(x-CX)<=hw;}
   function distSeg(x,y,a,b){
     const dx=b[0]-a[0],dy=b[1]-a[1],len2=dx*dx+dy*dy||1;
     let t=((x-a[0])*dx+(y-a[1])*dy)/len2; t=Math.max(0,Math.min(1,t));
@@ -3361,12 +3356,13 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
     return inEllipse(x,y,HEAD)||inTorso(x,y)||inArm(x,y,ARM_L)||inArm(x,y,ARM_R)
       ||inEllipse(x,y,HAND_L)||inEllipse(x,y,HAND_R);
   }
+  function toScreen(x,y){return [offX+x*scale,offY+y*scale];}
   function outlinePath(ctx){
     ctx.beginPath();
     ctx.ellipse(...toScreen(HEAD.cx,HEAD.cy),HEAD.rx*scale,HEAD.ry*scale,0,0,Math.PI*2);
-    ctx.moveTo(...toScreen(100-TORSO_PROFILE[0][1],TORSO_PROFILE[0][0]));
-    for(const[y,hw]of TORSO_PROFILE)ctx.lineTo(...toScreen(100-hw,y));
-    for(let i=TORSO_PROFILE.length-1;i>=0;i--)ctx.lineTo(...toScreen(100+TORSO_PROFILE[i][1],TORSO_PROFILE[i][0]));
+    ctx.moveTo(...toScreen(CX-TORSO_PROFILE[0][1],TORSO_PROFILE[0][0]));
+    for(const[y,hw]of TORSO_PROFILE)ctx.lineTo(...toScreen(CX-hw,y));
+    for(let i=TORSO_PROFILE.length-1;i>=0;i--)ctx.lineTo(...toScreen(CX+TORSO_PROFILE[i][1],TORSO_PROFILE[i][0]));
     ctx.closePath();
     [ARM_L,ARM_R].forEach(arm=>arm.forEach(seg=>{
       const[ax,ay]=toScreen(seg.a[0],seg.a[1]),[bx,by]=toScreen(seg.b[0],seg.b[1]);
@@ -3379,86 +3375,64 @@ const esc=t=>(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
       ctx.ellipse(...toScreen(h.cx,h.cy),h.rx*scale,h.ry*scale,0,0,Math.PI*2);});
   }
 
-  const pts=[]; const rnd=(a,b)=>a+Math.random()*(b-a);
-  (function gen(){
-    let tries=0;
-    while(pts.length<140&&tries<6000){
-      tries++;
-      const x=rnd(18,182), y=rnd(10,244);
-      if(!inBody(x,y))continue;
-      let tooClose=false;
-      for(const p of pts){if((p.x-x)**2+(p.y-y)**2<48){tooClose=true;break;}}
-      if(tooClose)continue;
-      pts.push({x,y,head:inEllipse(x,y,HEAD),ph:Math.random()*Math.PI*2,sp:0.6+Math.random()*0.8});
+  // Pre-compute horizontal scan-line fill: for each row, find the x-runs inside the
+  // silhouette (there can be several — torso, each arm — especially in an A-pose).
+  const ROWS=[];
+  for(let y=6; y<=240; y+=2.1){
+    const runs=[]; let start=null;
+    for(let x=0; x<=MW; x+=2){
+      const inside=inBody(x,y);
+      if(inside&&start===null)start=x;
+      if(!inside&&start!==null){runs.push([start,x]); start=null;}
     }
-  })();
-  const headIdx=pts.map((_,i)=>i).filter(i=>pts[i].head);
-  const neuronSet=new Set();
-  for(let i=0;i<Math.min(9,headIdx.length);i++)neuronSet.add(headIdx[Math.floor(Math.random()*headIdx.length)]);
-  pts.forEach((p,i)=>p.neuron=neuronSet.has(i));
-
-  const edges=[];
-  for(let i=0;i<pts.length;i++){
-    const d=[];
-    for(let j=0;j<pts.length;j++){if(i===j)continue; d.push([j,(pts[i].x-pts[j].x)**2+(pts[i].y-pts[j].y)**2]);}
-    d.sort((a,b)=>a[1]-b[1]);
-    for(let k=0;k<3;k++){if(d[k]&&d[k][1]<900){
-      const j=d[k][0]; if(!edges.some(e=>(e[0]===i&&e[1]===j)||(e[0]===j&&e[1]===i)))edges.push([i,j]);
-    }}
+    if(start!==null)runs.push([start,MW]);
+    if(runs.length)ROWS.push({y,runs,ph:Math.random()*Math.PI*2});
   }
 
-  function toScreen(x,y){return [offX+x*scale,offY+y*scale];}
   let t0=performance.now();
   function draw(now){
     t0=now;
     const think=$('core').classList.contains('think');
-    const cyan=[92,200,255], amber=[255,180,77];
-    const col=think?amber:cyan, gold=think?amber:[201,168,76];
+    const col=think?[255,180,77]:[92,200,255];
     const time=now/1000;
 
     ctx.setTransform(dpr,0,0,dpr,0,0);
-    ctx.fillStyle='rgba(3,6,12,0.30)';
+    ctx.fillStyle='rgba(3,6,12,0.35)';
     ctx.fillRect(0,0,cv.width/dpr,cv.height/dpr);
 
-    const sway=Math.sin(time*0.5)*2.4;
+    const sway=Math.sin(time*0.45)*2.2;
     ctx.save(); ctx.translate(sway,0);
 
-    const [fx,fy]=toScreen(100,248);
-    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.28)`; ctx.lineWidth=1;
-    for(let r=1;r<=3;r++){ctx.beginPath();ctx.ellipse(fx,fy,26*scale*r,5*scale*r,0,0,Math.PI*2);ctx.stroke();}
+    // projector floor grid at the feet
+    const [fx,fy]=toScreen(CX,240);
+    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.26)`; ctx.lineWidth=1;
+    for(let r=1;r<=3;r++){ctx.beginPath();ctx.ellipse(fx,fy,30*scale*r,5.5*scale*r,0,0,Math.PI*2);ctx.stroke();}
     for(let a=0;a<12;a++){const ang=a/12*Math.PI*2;
-      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx+Math.cos(ang)*78*scale,fy+Math.sin(ang)*14*scale);ctx.stroke();}
+      ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(fx+Math.cos(ang)*90*scale,fy+Math.sin(ang)*15*scale);ctx.stroke();}
 
-    ctx.lineWidth=1.1; ctx.shadowColor=`rgba(${col[0]},${col[1]},${col[2]},0.8)`; ctx.shadowBlur=5;
-    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.65)`;
+    // body fill — dense horizontal scan-lines, brightness shimmering gently per row
+    ctx.lineWidth=Math.max(scale*0.55,0.8);
+    for(const row of ROWS){
+      const shimmer=0.55+0.45*Math.sin(time*1.1+row.ph);
+      ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},${(0.18+0.22*shimmer).toFixed(3)})`;
+      for(const[x1,x2]of row.runs){
+        const[sx1,sy1]=toScreen(x1,row.y), [sx2]=toScreen(x2,row.y);
+        ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.lineTo(sx2,sy1); ctx.stroke();
+      }
+    }
+
+    // bright rim glow — the defining silhouette edge, like the reference
+    ctx.lineWidth=1.4; ctx.shadowColor=`rgba(${col[0]},${col[1]},${col[2]},0.95)`; ctx.shadowBlur=think?14:9;
+    ctx.strokeStyle=`rgba(${col[0]},${col[1]},${col[2]},0.9)`;
     outlinePath(ctx); ctx.stroke(); ctx.shadowBlur=0;
 
-    const flicker=0.85+0.15*Math.sin(time*3.1);
-    for(const[i,j]of edges){
-      const p=pts[i],q=pts[j],isBrain=p.neuron||q.neuron;
-      const[x1,y1]=toScreen(p.x,p.y),[x2,y2]=toScreen(q.x,q.y);
-      const c=isBrain?gold:col;
-      ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${isBrain?0.5*flicker:0.16*flicker})`;
-      ctx.lineWidth=isBrain?0.8:0.6;
-      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
-    }
-    for(const p of pts){
-      const[x,y]=toScreen(p.x,p.y);
-      const pulse=0.6+0.4*Math.sin(time*p.sp*2+p.ph);
-      const c=p.neuron?gold:col;
-      const r=(p.neuron?2.6:1.5)*Math.max(scale/2.4,0.7)*pulse;
-      ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${p.neuron?0.95:0.55})`;
-      ctx.shadowColor=`rgba(${c[0]},${c[1]},${c[2]},0.9)`; ctx.shadowBlur=p.neuron?9:4;
-      ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
-    }
-    ctx.shadowBlur=0;
-
-    const sy=(time*70)%window.innerHeight;
-    const grad=ctx.createLinearGradient(0,sy-40,0,sy+40);
+    // scanline sweep — a bright band drifting down the whole figure
+    const sy=(time*(think?150:60))%window.innerHeight;
+    const grad=ctx.createLinearGradient(0,sy-45,0,sy+45);
     grad.addColorStop(0,'rgba(92,200,255,0)');
-    grad.addColorStop(0.5,`rgba(${col[0]},${col[1]},${col[2]},0.10)`);
+    grad.addColorStop(0.5,`rgba(${col[0]},${col[1]},${col[2]},0.16)`);
     grad.addColorStop(1,'rgba(92,200,255,0)');
-    ctx.fillStyle=grad; ctx.fillRect(0,sy-40,cv.width/dpr,80);
+    ctx.fillStyle=grad; ctx.fillRect(0,sy-45,cv.width/dpr,90);
 
     ctx.restore();
     requestAnimationFrame(draw);
