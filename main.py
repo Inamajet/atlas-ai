@@ -1374,7 +1374,7 @@ def agent_answer(msg, history, facts):
         msgs.append({"role": h["role"], "content": (h.get("content") or "")[:800]})
     msgs.append({"role": "user", "content": msg})
 
-    for _ in range(10):   # persistence: keep chaining steps to finish real multi-step tasks
+    for _ in range(7):    # enough to finish real tasks, capped so it can't flail for minutes
         r, err = _tool_completion(msgs)
         if err == "rate":
             return ("⚠ My free tool-calling quota (Groq) is maxed for now — it frees up on a rolling 24h "
