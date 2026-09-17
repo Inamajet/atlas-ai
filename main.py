@@ -2938,31 +2938,57 @@ def vision():
     return jsonify({"reply": "Vision temporarily unavailable — try again.",
                     "debug": _last_vision_errors})
 
-# ── Realistic TTS (ElevenLabs) ─────────────────────────────────────────────────
-# Set ELEVENLABS_KEY (and optionally ELEVENLABS_VOICE) as env vars to enable a
-# realistic voice. Without a key, the frontend falls back to the browser voice.
+# ── Realistic TTS — Fish Audio (primary) with ElevenLabs as fallback ────────────
+# Set FISH_KEY (+ optionally FISH_VOICE, a reference_id from a cloned/library voice) or
+# ELEVENLABS_KEY as env vars in Render. No key -> the frontend falls back to the browser
+# voice. Never hardcode a key here — this repo is public on GitHub.
+FISH_KEY   = os.environ.get("FISH_KEY", "")
+FISH_VOICE = os.environ.get("FISH_VOICE", "")   # optional reference_id; blank = default voice
 ELEVENLABS_KEY   = os.environ.get("ELEVENLABS_KEY", "")
 ELEVENLABS_VOICE = os.environ.get("ELEVENLABS_VOICE", "pNInz6obpgDQGcFmaJgB")  # "Adam"
 
+def _fish_tts(text):
+    body = {"text": text, "format": "mp3", "mp3_bitrate": 128}
+    if FISH_VOICE:
+        body["reference_id"] = FISH_VOICE
+    r = requests.post("https://api.fish.audio/v1/tts",
+        headers={"Authorization": f"Bearer {FISH_KEY}", "Content-Type": "application/json"},
+        json=body, timeout=30)
+    return r
+
+def _eleven_tts(text):
+    return requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE}",
+        headers={"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"},
+        json={"text": text, "model_id": "eleven_turbo_v2_5",
+              "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3}},
+        timeout=30)
+
 @app.route("/tts", methods=["POST"])
 def tts():
-    if not ELEVENLABS_KEY:
+    if not FISH_KEY and not ELEVENLABS_KEY:
         return jsonify({"enabled": False})
     text = (request.json or {}).get("text", "")[:1500]
     if not text:
         return jsonify({"enabled": True, "error": "no text"})
-    try:
-        r = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE}",
-            headers={"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"},
-            json={"text": text, "model_id": "eleven_turbo_v2_5",
-                  "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.3}},
-            timeout=30)
-        if r.status_code == 200:
-            return Response(r.content, mimetype="audio/mpeg")
-        return jsonify({"enabled": True, "error": f"HTTP {r.status_code}"})
-    except Exception as e:
-        return jsonify({"enabled": True, "error": str(e)})
+    errs = []
+    if FISH_KEY:
+        try:
+            r = _fish_tts(text)
+            if r.status_code == 200:
+                return Response(r.content, mimetype="audio/mpeg")
+            errs.append(f"fish HTTP {r.status_code}: {r.text[:150]}")
+        except Exception as e:
+            errs.append(f"fish: {e}")
+    if ELEVENLABS_KEY:
+        try:
+            r = _eleven_tts(text)
+            if r.status_code == 200:
+                return Response(r.content, mimetype="audio/mpeg")
+            errs.append(f"elevenlabs HTTP {r.status_code}")
+        except Exception as e:
+            errs.append(f"elevenlabs: {e}")
+    return jsonify({"enabled": True, "error": " | ".join(errs)})
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
