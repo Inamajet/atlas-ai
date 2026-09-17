@@ -1605,10 +1605,11 @@ def _msgs_to_prompt(msgs):
     return "\n\n".join(parts)
 
 def smart_chat(msgs, max_tokens=700):
-    """PRIMARY BRAIN: real Claude via the local subscription bridge when available;
-    automatically falls back to the free-model chain when Claude is rate-limited, logged
-    out, or the agent is offline. This is what makes Borfoli genuinely smart."""
-    if bridge_online():
+    """Default brain is the FREE model chain. Sonnet (the CLI bridge) is OPT-IN — used
+    only when Mani says 'sonnet' in the message. Otherwise it never touches Sonnet."""
+    wants_sonnet = any("sonnet" in (m.get("content", "") or "").lower()
+                       for m in msgs if m.get("role") == "user")
+    if wants_sonnet and bridge_online():
         system = "\n\n".join(m.get("content", "") for m in msgs if m.get("role") == "system")
         convo = _msgs_to_prompt([m for m in msgs if m.get("role") != "system"])
         try:
